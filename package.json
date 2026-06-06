@@ -32,16 +32,16 @@
       "dist/**/*"
     ],
     "asar": true,
+    "artifactName": "${productName}-${version}-${arch}.${ext}",
     "mac": {
       "category": "public.app-category.developer-tools",
       "target": [
-        {
-          "target": "dmg",
-          "arch": "arm64"
-        }
+        { "target": "dmg", "arch": ["arm64", "x64"] },
+        { "target": "zip", "arch": ["arm64", "x64"] }
       ],
       "icon": "build/icon.png",
       "identity": null,
+      "notarize": false,
       "hardenedRuntime": false,
       "extendInfo": {
         "LSUIElement": 1
