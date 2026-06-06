@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   build-macos:
-    runs-on: macos-13 # Intel runner:hdiutil 做 DMG 更稳(arm64 runner 偶发 "Device not configured");交叉构建两架构
+    runs-on: macos-14 # Apple Silicon runner(秒启动;macos-13 当前排队拿不到机器)。DMG 的 hdiutil 偶发失败靠下方重试兜
     steps:
       - uses: actions/checkout@v4
 
