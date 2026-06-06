@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   build-macos:
-    runs-on: macos-14 # Apple Silicon runner;electron-builder 在其上交叉构建 x64
+    runs-on: macos-13 # Intel runner:hdiutil 做 DMG 更稳(arm64 runner 偶发 "Device not configured");交叉构建两架构
     steps:
       - uses: actions/checkout@v4
 
@@ -29,7 +29,17 @@ jobs:
         run: npm run build:prod
 
       - name: Package (dmg + zip · arm64 + x64)
-        run: npx electron-builder --mac --publish never
+        # GitHub runner 上 hdiutil 偶发 "Device not configured" → 整体重试至多 3 次
+        run: |
+          for i in 1 2 3; do
+            echo "::group::electron-builder attempt $i"
+            if npx electron-builder --mac --publish never; then
+              echo "::endgroup::"; exit 0
+            fi
+            echo "::endgroup::"
+            echo "attempt $i failed; retrying in 20s…"; sleep 20
+          done
+          echo "all 3 attempts failed"; exit 1
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false # 无证书:别去找/试图签名
 
