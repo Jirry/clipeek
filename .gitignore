@@ -1,0 +1,16 @@
+node_modules/
+dist/
+release/
+*.log
+.DS_Store
+
+# 构建产物 / 编辑器 / 环境变量
+*.tsbuildinfo
+.vscode/
+.idea/
+.env
+.env.*
+
+# 临时草稿(别进仓库)
+scratch_*.ts
+test_type_check.ts

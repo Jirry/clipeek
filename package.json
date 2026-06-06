@@ -1,0 +1,61 @@
+{
+  "name": "clipeek",
+  "version": "0.1.0",
+  "description": "所有 AI agent,角落里一眼看全 — 桌面悬浮 HUD,实时监控本地 CLI 会话状态",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "node build.mjs",
+    "build:prod": "node build.mjs --prod",
+    "dev": "node build.mjs --watch",
+    "start": "npm run build && electron .",
+    "icon": "node tools/make-placeholder-icon.mjs",
+    "dist": "npm run build:prod && electron-builder",
+    "clean": "rm -rf dist release"
+  },
+  "author": "Jirry",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Jirry/clipeek.git"
+  },
+  "homepage": "https://github.com/Jirry/clipeek#readme",
+  "bugs": "https://github.com/Jirry/clipeek/issues",
+  "build": {
+    "appId": "top.jirry.clipeek",
+    "productName": "clipeek",
+    "copyright": "© 2026 Jirry",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*"
+    ],
+    "asar": true,
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": "arm64"
+        }
+      ],
+      "icon": "build/icon.png",
+      "identity": null,
+      "hardenedRuntime": false,
+      "extendInfo": {
+        "LSUIElement": 1
+      }
+    },
+    "dmg": {
+      "title": "clipeek ${version}"
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "electron": "^33.2.0",
+    "electron-builder": "^26.15.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.7.0"
+  }
+}

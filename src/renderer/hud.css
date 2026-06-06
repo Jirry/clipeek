@@ -1,0 +1,569 @@
+/* clipeek HUD —— 双窗口共用样式。
+   .bar-surface  状态条窗:一排灯 + 横向滚动
+   .overlay-surface 浮层窗:悬停弹框 / 展开列表 / 竖排列表
+   红绿灯灯语:绿=完成 / 黄=执行中 / 黄闪=需介入 / 红=异常 / 灰=已退出 */
+
+:root {
+  --scale: 1;
+  --dot: calc(20px * var(--scale));
+  --gap: calc(13px * var(--scale));
+  --cell-w: calc(60px * var(--scale));
+  --pad-v: calc(8px * var(--scale));
+  --pad-h: calc(16px * var(--scale));
+  --font: calc(11px * var(--scale));
+  --radius: calc(16px * var(--scale));
+
+  --green: #34c759;
+  --amber: #ffcc00;
+  --red: #ff453a;
+  --gray: #8e8e93;
+  --bg: rgba(28, 28, 30, 0.66);
+  --text: rgba(255, 255, 255, 0.92);
+  --text-dim: rgba(255, 255, 255, 0.5);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+html,
+body {
+  background: transparent;
+  overflow: hidden;
+  font-family: -apple-system, "SF Pro Text", "PingFang SC", system-ui, sans-serif;
+  color: var(--text);
+}
+
+#app {
+  display: inline-block;
+  /* margin 由 hud.ts 按窗口/停靠方向动态设置(给阴影留边距) */
+}
+
+/* 横排窗的 .hud 是透明容器:上方预留悬停槽 + 下方状态条;竖排窗的 .hud 直接是玻璃面 */
+.hud {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: calc(6px * var(--scale));
+}
+
+/* 玻璃面(无阴影:窗体即玻璃面本身大小)*/
+.bar-surface,
+.overlay-surface,
+.tip-surface,
+.hover-slot.filled {
+  background: var(--bg);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius);
+  backdrop-filter: blur(18px) saturate(1.3);
+  -webkit-backdrop-filter: blur(18px) saturate(1.3);
+}
+
+/* 悬停槽:固定预留高度(透明不可见),悬停填充 → 不 resize → 零抖动 */
+.hover-slot {
+  width: 0;
+  min-width: 100%;
+  height: calc(48px * var(--scale));
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: calc(2px * var(--scale));
+  padding: 0 calc(12px * var(--scale));
+  overflow: hidden;
+}
+.hover-slot.filled {
+  animation: popFade 0.12s ease-out;
+}
+@keyframes popFade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.hover-name {
+  color: var(--text);
+  font-size: calc(13px * var(--scale));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hover-slot .panel-path {
+  flex: 0 0 auto;
+  width: 100%;
+}
+
+/* ========== 状态条 ========== */
+.bar-surface {
+  position: relative; /* 容纳拉伸手柄 */
+  display: flex;
+  flex-direction: row; /* 灯横排(必须显式,避免被 .hud 的 column 影响) */
+  align-items: center;
+  gap: var(--gap);
+  padding: var(--pad-v) var(--pad-h);
+  overflow: hidden; /* 滚动交给内部 .bar-scroll,手柄留在外面不滚 */
+  -webkit-app-region: no-drag;
+}
+/* 灯的滚动区:只有它滚动,左侧拖动手柄在它外面 → 滚动时手柄不动 */
+.bar-scroll {
+  flex: 1 1 auto;
+  min-width: 0;
+  align-self: stretch; /* 撑满高度 → 横向滚动条落到底部附近(否则停在垂直居中处偏上) */
+  display: flex;
+  flex-direction: row;
+  align-items: center; /* 灯仍垂直居中 */
+  gap: var(--gap);
+  overflow-x: auto;
+  overflow-y: hidden;
+  cursor: default; /* 拖动这里 = 横向滚动;点灯 = 展开 */
+}
+/* 隐藏原生横向滚动条(它可拖、和「按住灯区拖动滚动」打架)。可滚动性靠边缘渐隐提示。 */
+.bar-scroll::-webkit-scrollbar {
+  display: none;
+}
+/* 边缘渐隐:有更多内容的一侧把灯淡出约一个灯宽 → 暗示「还能往这边滚」(只在溢出时出现) */
+.bar-scroll.more-right {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - var(--cell-w)), transparent);
+}
+.bar-scroll.more-left {
+  -webkit-mask-image: linear-gradient(to left, #000 calc(100% - var(--cell-w)), transparent);
+}
+.bar-scroll.more-left.more-right {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 var(--cell-w),
+    #000 calc(100% - var(--cell-w)),
+    transparent
+  );
+}
+/* 边缘翻页箭头:无生硬圆框,只一抹柔光晕 + 干净的箭头,贴合玻璃质感。
+   只在对应侧有隐藏灯时显示(.show 由 JS 切换) */
+.scroll-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: calc(24px * var(--scale));
+  height: calc(24px * var(--scale));
+  display: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: radial-gradient(circle at center, rgba(0, 0, 0, 0.22), rgba(0, 0, 0, 0) 72%); /* 极淡柔光晕,仅助辨识 */
+  color: rgba(255, 255, 255, 0.35); /* 与拖动区圆点同色,协调 */
+  font-size: calc(15px * var(--scale));
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  pointer-events: auto;
+  z-index: 15; /* 在灯之上、拉伸手柄(20)之下 */
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.scroll-arrow.show {
+  display: flex;
+}
+.scroll-arrow.left {
+  left: calc(42px * var(--scale)); /* 滚动区左缘附近 */
+}
+.scroll-arrow.right {
+  right: calc(10px * var(--scale)); /* 滚动区右缘附近(避开拉伸手柄)*/
+}
+.scroll-arrow:hover {
+  color: rgba(255, 255, 255, 0.62);
+  background: radial-gradient(circle at center, rgba(0, 0, 0, 0.4), rgba(0, 0, 0, 0) 72%);
+}
+
+/* 拖动手柄:8 点点阵,按住拖动整个窗口。
+   .grip      竖向 2 列×4 行 —— 灯条左侧
+   .grip-bar  横向 4 列×2 行 —— 竖排列表顶部 */
+.grip {
+  flex: 0 0 auto;
+  align-self: stretch;
+  display: grid;
+  grid-template-columns: repeat(2, auto);
+  gap: calc(3px * var(--scale));
+  align-content: center;
+  justify-content: center;
+  padding: 0 calc(5px * var(--scale));
+  cursor: grab;
+}
+.grip:active {
+  cursor: grabbing;
+}
+.grip-bar {
+  grid-template-columns: repeat(4, auto);
+  align-self: auto;
+  width: 100%;
+  padding: calc(5px * var(--scale)) 0 calc(7px * var(--scale));
+}
+.grip-dot {
+  width: calc(3px * var(--scale));
+  height: calc(3px * var(--scale));
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.cell {
+  flex: 1 0 var(--cell-w); /* 空间够则平分铺满,放不下则保持基准宽 → 横向滚动 */
+  min-width: 0;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(4px * var(--scale));
+  cursor: pointer;
+}
+
+.light {
+  width: var(--dot);
+  height: var(--dot);
+  border-radius: 50%;
+  background: var(--gray);
+  transition: background 0.25s ease;
+}
+.light.done {
+  background: var(--green);
+  box-shadow: 0 0 calc(3px * var(--scale)) var(--green); /* 一点点同色微光晕,柔和不生硬 */
+}
+.light.working {
+  background: var(--amber);
+  box-shadow: 0 0 calc(3px * var(--scale)) var(--amber);
+}
+.light.error {
+  background: var(--red);
+  box-shadow: 0 0 calc(3px * var(--scale)) var(--red);
+}
+.light.exited {
+  background: var(--gray);
+  opacity: 0.4;
+}
+.light.needsInput {
+  background: var(--amber);
+  box-shadow: 0 0 calc(7px * var(--scale)) var(--amber);
+  animation: blink 1.2s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+/* 绿闪·该你了:和黄闪同样抢眼,只是绿色 */
+.light.attention {
+  background: var(--green);
+  box-shadow: 0 0 calc(7px * var(--scale)) var(--green);
+  animation: blink 1.2s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+@keyframes blink {
+  0%,
+  100% {
+    transform: scale(1.15);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(0.82);
+    opacity: 0.5;
+  }
+}
+
+.name {
+  font-size: var(--font);
+  line-height: 1.1;
+  color: var(--text-dim);
+  width: 100%;
+  overflow: hidden;
+  text-align: center; /* 默认:居中,超出截断省略号 */
+}
+.name-inner {
+  display: inline-block;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}
+/* 仅鼠标悬停该灯、且名字溢出(.can-marquee 由 JS 标记)时,取消截断并左右来回滚动 */
+.cell:hover .name.can-marquee {
+  text-align: left;
+}
+.cell:hover .name.can-marquee .name-inner {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  animation: marquee var(--mq-dur, 6s) ease-in-out infinite alternate;
+  will-change: transform;
+}
+@keyframes marquee {
+  0%,
+  16% {
+    transform: translateX(0);
+  }
+  84%,
+  100% {
+    transform: translateX(var(--mq-shift, 0));
+  }
+}
+
+.resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: calc(4px * var(--scale)); /* 贴近边框的窄命中区,避免离边框还远就触发/误触点灯 */
+  z-index: 20; /* 压在手柄/灯之上,优先吃到拉伸 */
+  -webkit-app-region: no-drag;
+  cursor: ew-resize;
+}
+.resize-handle.left {
+  left: 0;
+}
+.resize-handle.right {
+  right: 0;
+}
+/* 顶边手柄:横向条,拖动调高度(底部锚定);两端让给四角 */
+.resize-handle.top {
+  left: calc(8px * var(--scale));
+  right: calc(8px * var(--scale));
+  bottom: auto;
+  width: auto;
+  height: calc(4px * var(--scale));
+  cursor: ns-resize;
+}
+/* 底边手柄:横向条,拖动调高度(顶部锚定);两端让给四角 */
+.resize-handle.bottom {
+  top: auto;
+  bottom: 0;
+  left: calc(8px * var(--scale));
+  right: calc(8px * var(--scale));
+  width: auto;
+  height: calc(4px * var(--scale));
+  cursor: ns-resize;
+}
+/* 四角:斜向同时调宽+调高(优先于边手柄)*/
+.resize-handle.topleft,
+.resize-handle.topright,
+.resize-handle.botleft,
+.resize-handle.botright {
+  top: auto;
+  bottom: auto;
+  width: calc(8px * var(--scale));
+  height: calc(8px * var(--scale));
+  z-index: 21;
+}
+.resize-handle.topleft {
+  top: 0;
+  left: 0;
+  cursor: nwse-resize;
+}
+.resize-handle.topright {
+  top: 0;
+  right: 0;
+  cursor: nesw-resize;
+}
+.resize-handle.botleft {
+  bottom: 0;
+  left: 0;
+  cursor: nesw-resize;
+}
+.resize-handle.botright {
+  bottom: 0;
+  right: 0;
+  cursor: nwse-resize;
+}
+
+.empty {
+  font-size: var(--font);
+  color: var(--text-dim);
+  padding: 0 calc(4px * var(--scale));
+}
+
+/* ========== 竖排窗 ========== */
+.overlay-surface {
+  position: relative; /* 容纳拉伸手柄 */
+  display: flex;
+  flex-direction: column;
+  max-height: calc(520px * var(--scale)); /* 内容过多时封顶,内部滚动(用户拖高度则解除)*/
+}
+
+/* 竖排列表 */
+.panel {
+  display: flex;
+  flex-direction: column;
+  padding: calc(8px * var(--scale)) calc(10px * var(--scale));
+  -webkit-app-region: no-drag;
+}
+.panel-summary {
+  flex: 0 0 auto;
+  font-size: calc(11px * var(--scale));
+  color: var(--text-dim);
+  padding: calc(2px * var(--scale)) calc(4px * var(--scale)) calc(6px * var(--scale));
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  margin-bottom: calc(4px * var(--scale));
+}
+.panel-summary.with-collapse {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+/* 横排弹出列表里的折叠按钮:点击收起 */
+.collapse-btn {
+  flex: 0 0 auto;
+  width: calc(18px * var(--scale));
+  height: calc(18px * var(--scale));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: calc(5px * var(--scale));
+  font-size: calc(12px * var(--scale));
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.collapse-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text);
+}
+.panel-list {
+  display: flex;
+  flex-direction: column;
+  gap: calc(2px * var(--scale));
+  overflow-y: auto;
+  max-height: calc(460px * var(--scale)); /* 自适应模式:内容高度,过多则封顶滚动 */
+}
+/* 固定高度模式(用户拖过高度 / 拖拽中):撑满窗口 + 内部滚动 */
+.overlay-surface.fixed-h .panel {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.overlay-surface.fixed-h .panel-list {
+  flex: 1 1 0;
+  min-height: 0;
+  max-height: none;
+}
+.panel-list::-webkit-scrollbar {
+  width: calc(5px * var(--scale));
+}
+.panel-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: calc(3px * var(--scale));
+}
+
+.panel-row {
+  display: flex;
+  align-items: center;
+  gap: calc(8px * var(--scale));
+  padding: calc(6px * var(--scale)) calc(4px * var(--scale));
+  font-size: calc(13px * var(--scale));
+  border-radius: calc(6px * var(--scale));
+  cursor: default;
+}
+.panel-row:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.panel-dot {
+  width: calc(16px * var(--scale));
+  height: calc(16px * var(--scale));
+  border-radius: 50%;
+  flex: 0 0 auto;
+  /* 光晕为同色,随状态在 JS 内联设置(见 buildRow)*/
+}
+.panel-name {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: calc(4px * var(--scale));
+  color: var(--text);
+}
+.name-text {
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 改名引导:平时隐藏,悬停该行/提示框才浮现的铅笔;点它或双击名字进入编辑 */
+.edit-pencil {
+  flex: 0 0 auto;
+  opacity: 0;
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: calc(14px * var(--scale)); /* 比正文略大一点点,作为编辑图标 */
+  line-height: 1;
+  transition: opacity 0.12s ease, color 0.12s ease;
+}
+.panel-row:hover .edit-pencil,
+.tip-card:hover .edit-pencil {
+  opacity: 0.5;
+}
+.edit-pencil:hover {
+  opacity: 1;
+  color: var(--text);
+}
+.panel-path {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  color: var(--text-dim);
+  font-size: calc(12px * var(--scale));
+}
+.path-head {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.path-tail {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.panel-time {
+  flex: 0 0 auto;
+  min-width: calc(42px * var(--scale));
+  text-align: right;
+  color: var(--text-dim);
+  font-size: calc(11px * var(--scale));
+}
+
+/* ========== 提示框窗(横排悬停灯,与灯条等宽、贴其上方)========== */
+.tip-anim {
+  animation: tipFade 0.14s ease-out; /* 仅首次弹出淡入;灯间切换不加此类 → 不闪 */
+}
+@keyframes tipFade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.tip-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: calc(4px * var(--scale));
+  padding: calc(9px * var(--scale)) calc(12px * var(--scale));
+  width: 100%;
+}
+.tip-card .panel-name {
+  flex: 0 0 auto;
+  width: 100%;
+  font-size: calc(13px * var(--scale));
+}
+.tip-card .panel-path {
+  flex: 0 0 auto;
+  width: 100%;
+  font-size: calc(12px * var(--scale));
+}
+
+/* 改名输入框(列表 + 提示框共用) */
+.panel-name input,
+.hover-name input {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+  color: var(--text);
+  font: inherit;
+  padding: 1px 4px;
+  outline: none;
+}
