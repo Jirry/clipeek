@@ -8,6 +8,7 @@ import { loadConfig, saveConfig } from './store';
 import { ClaudeCodeAdapter } from './adapters/claude';
 import { installHook, FOCUS_DIR } from './hook';
 import { acknowledge } from './ack';
+import { pickNextJump } from './jump';
 
 /** 双击灯 → 打开/聚焦对应终端 tab。读 hook 记下的聚焦深链(目前 Warp 的 WARP_FOCUS_URL)。 */
 const WARP_URL_RE = /^warp[a-z]*:\/\//i; // 仅放行 warp:// / warposs:// 深链
@@ -37,21 +38,29 @@ function openTerminal(sessionId: string): void {
   if (url) shell.openExternal(url).catch((e) => console.error('[clipeek] openExternal fail', e));
 }
 
-// —— 全局快捷键:⌃⌥⌘J 跳到「该你了」的会话并聚焦其终端 ——
-// 待处理 = 红(异常)/ 黄闪(权限·提问·计划)/ 绿闪(刚结束·该你了);执行中/休眠/已退不算。
-// 多个就按状态优先级(红▸黄闪▸绿闪)+ 最近活动排序,反复按循环走一遍(≈从左到右走灯条上的待处理灯)。
-const JUMP_SHORTCUT = 'Control+Alt+Command+J'; // = ⌃⌥⌘J;三键修饰几乎零冲突。改键位改这里(以后可挪进 config)
-const ATTENTION_STATES = new Set<SessionState>(['error', 'needsInput', 'attention']);
+// —— 全局快捷键:⌃⌥J 跳到下一个会话、聚焦其终端、并高亮该灯 ——
+// 选目标的纯逻辑在 ./jump 的 pickNextJump(已单测):优先 红▸黄闪▸黄▸绿闪 循环,都没有则在所有绿灯里循环。
+const JUMP_SHORTCUT = 'Control+Alt+J'; // = ⌃⌥J;两修饰键、左下相邻好按,且非系统快捷键。改键位改这里(以后可挪进 config)
 let lastJumpId: string | null = null;
-function jumpToNextAttention(): void {
-  const cands = latest
-    .filter((s) => ATTENTION_STATES.has(s.state))
-    .sort((a, b) => STATE_PRIORITY[a.state] - STATE_PRIORITY[b.state] || b.lastActivity - a.lastActivity);
-  if (!cands.length) return; // 没人需要你 → 静默
-  const i = lastJumpId ? cands.findIndex((s) => s.id === lastJumpId) : -1;
-  const next = cands[(i + 1) % cands.length]; // i=-1(首按/上次的已不在)→ 第 0 个=最紧急
+function jumpToNext(): void {
+  const next = pickNextJump(latest, lastJumpId);
+  if (!next) return; // 没有可跳的会话(只剩执行中外的…实为 exited/无会话)→ 静默
   lastJumpId = next.id;
   openTerminal(next.id);
+  setJumpHighlight(next.id); // 高亮被触发的灯,过会儿自动清;循环再按则换新、旧的立即恢复
+}
+
+// 把「当前高亮哪个会话」下发给灯条/列表窗;HIGHLIGHT_MS 后自动清空(发 null)。
+const JUMP_HIGHLIGHT_MS = 2500;
+let jumpHighlightTimer: ReturnType<typeof setTimeout> | null = null;
+function setJumpHighlight(id: string | null): void {
+  if (jumpHighlightTimer) {
+    clearTimeout(jumpHighlightTimer);
+    jumpHighlightTimer = null;
+  }
+  barWin?.webContents.send('jump:highlight', id);
+  listWin?.webContents.send('jump:highlight', id);
+  if (id) jumpHighlightTimer = setTimeout(() => setJumpHighlight(null), JUMP_HIGHLIGHT_MS);
 }
 
 // 两套独立窗口,切换只是 show/hide:
@@ -633,7 +642,7 @@ app.whenReady().then(() => {
   setupTray();
   setupIpc();
   startPolling();
-  if (!globalShortcut.register(JUMP_SHORTCUT, jumpToNextAttention)) {
+  if (!globalShortcut.register(JUMP_SHORTCUT, jumpToNext)) {
     console.error('[clipeek] 全局快捷键注册失败(可能被别的程序占用):', JUMP_SHORTCUT);
   }
   app.on('activate', () => {

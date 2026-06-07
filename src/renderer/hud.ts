@@ -24,6 +24,7 @@ declare global {
       openSession(id: string): void;
       focusForEdit(): void;
       onListWidth(cb: (w: number) => void): () => void;
+      onJumpHighlight(cb: (id: string | null) => void): () => void;
       tipShow(id: string): void;
       tipLeave(): void;
       tipEnter(): void;
@@ -63,6 +64,7 @@ let config: Config = {
 };
 let dock = { bottom: true, right: true, dockH: 56, home: '' };
 let editingId: string | null = null;
+let highlightId: string | null = null; // ⌃⌥J 触发后高亮的会话 id(主进程下发,过会儿清空)
 let tipSession: Session | null = null; // 提示框窗:当前要显示的那条会话
 let tipContentW = 0; // 提示框内容宽 = 灯条玻璃宽(主进程下发)
 let pointerDown = false; // 状态条上指针按下中 → 抑制悬停提示框 + 暂停重渲染(保住捕获元素)
@@ -166,7 +168,7 @@ function buildRow(s: Session, showPath: boolean): HTMLElement {
     if ((e.target as HTMLElement).closest('input, .edit-pencil')) return; // 编辑输入/铅笔不触发打开
     window.clipeek.openSession(s.id); // 单击行 → 打开对应终端 tab
   });
-  const dot = el('div', 'panel-dot');
+  const dot = el('div', s.id === highlightId ? 'panel-dot jumped' : 'panel-dot');
   dot.style.background = STATE_COLOR[s.state];
   const blinking = s.state === 'needsInput' || s.state === 'attention'; // 黄闪 / 绿闪
   // 同色微光晕(闪烁态稍强),柔和不生硬;颜色随状态,故内联设置
@@ -267,7 +269,7 @@ function barPad() {
 function barSig(): string {
   return (
     sessions.map((x) => `${x.id}:${x.state}:${x.name}`).join('|') +
-    `|${config.showNames}|${config.scale}|${config.width}|${config.height}|${dock.dockH}`
+    `|${config.showNames}|${config.scale}|${config.width}|${config.height}|${dock.dockH}|${highlightId}`
   );
 }
 let lastBarSig = '';
@@ -311,7 +313,7 @@ function renderBar(): void {
   for (const s of sessions) {
     const cell = el('div', 'cell');
     cell.dataset.sid = s.id; // 供单击/双击区分时取会话 id
-    cell.appendChild(el('div', `light ${s.state}`));
+    cell.appendChild(el('div', `light ${s.state}${s.id === highlightId ? ' jumped' : ''}`));
     if (config.showNames) {
       const name = el('div', 'name'); // 跑马灯容器:超出时左右来回滚,不截断
       name.appendChild(el('span', 'name-inner', s.name));
@@ -538,6 +540,10 @@ async function init() {
   });
   window.clipeek.onDock((d) => {
     dock = d;
+    if (!editingId && !pointerDown) render();
+  });
+  window.clipeek.onJumpHighlight((id) => {
+    highlightId = id; // 高亮/取消高亮被 ⌃⌥J 触发的灯
     if (!editingId && !pointerDown) render();
   });
   if (ROLE === 'tip') {

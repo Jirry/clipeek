@@ -85,6 +85,11 @@ const api = {
     ipcRenderer.on('list:width', h);
     return () => ipcRenderer.removeListener('list:width', h);
   },
+  onJumpHighlight(cb: (id: string | null) => void): () => void {
+    const h = (_e: unknown, id: string | null) => cb(id);
+    ipcRenderer.on('jump:highlight', h);
+    return () => ipcRenderer.removeListener('jump:highlight', h);
+  },
 };
 
 contextBridge.exposeInMainWorld('clipeek', api);

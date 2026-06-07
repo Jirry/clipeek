@@ -265,6 +265,25 @@ body {
     opacity: 0.5;
   }
 }
+/* ⌃⌥J 触发的灯:白色环(outline,不覆盖状态色光晕)+ 一次缩放脉冲,标出「跳到了这个」;
+   主进程几秒后清掉 .jumped → 自动恢复。放在状态规则之后 → 高亮期间盖掉黄闪/绿闪的 blink。 */
+.light.jumped,
+.panel-dot.jumped {
+  outline: calc(2px * var(--scale)) solid rgba(255, 255, 255, 0.92);
+  outline-offset: calc(2px * var(--scale));
+  animation: jumpPop 0.42s ease-out;
+}
+@keyframes jumpPop {
+  0% {
+    transform: scale(0.9);
+  }
+  45% {
+    transform: scale(1.5);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
 
 .name {
   font-size: var(--font);
