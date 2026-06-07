@@ -2,6 +2,8 @@
 
 > 所有 AI agent,角落里一眼看全。
 
+[![CI](https://github.com/Jirry/clipeek/actions/workflows/ci.yml/badge.svg)](https://github.com/Jirry/clipeek/actions/workflows/ci.yml)
+
 **clipeek**(瞄一眼)是一个常驻屏幕角落、置顶悬浮的 macOS HUD,实时监控你本地的 AI CLI 会话,把每个会话显示成一颗红绿灯——不用在一堆终端标签页里翻找,一眼就知道哪个 agent 在干活、哪个在等你、哪个已经完事,点一下还能直接跳到它的终端。
 
 [English](README.md) · 中文

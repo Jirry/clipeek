@@ -2,6 +2,8 @@
 
 > See all your AI agents at a glance, tucked in the corner.
 
+[![CI](https://github.com/Jirry/clipeek/actions/workflows/ci.yml/badge.svg)](https://github.com/Jirry/clipeek/actions/workflows/ci.yml)
+
 **clipeek**（瞄一眼)is a tiny, always‑on‑top macOS HUD that watches your local AI CLI sessions and shows each one as a traffic‑light dot — so you can tell at a glance which agent is working, which needs you, and which is done, and jump straight to its terminal with a click, without hunting through tabs.
 
 English · [中文](README.zh-CN.md)
