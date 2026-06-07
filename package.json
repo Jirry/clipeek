@@ -10,6 +10,7 @@
     "start": "npm run build && electron .",
     "icon": "node tools/make-placeholder-icon.mjs",
     "dist": "npm run build:prod && electron-builder",
+    "test": "vitest run",
     "clean": "rm -rf dist release"
   },
   "author": "Jirry",
@@ -68,6 +69,7 @@
     "electron": "^33.2.0",
     "electron-builder": "^26.15.0",
     "esbuild": "^0.24.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.8"
   }
 }

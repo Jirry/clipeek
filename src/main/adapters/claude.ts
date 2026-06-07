@@ -78,9 +78,9 @@ function projectName(cwd: string): string {
 
 /** 读 Notification hook 的落点:若某会话有「晚于 transcript」的待回应通知 → 返回类型。
  *  permission/question = 硬阻塞(黄闪);idle = Claude 报告在等你输入(软等待,配合新鲜度判 attention)。 */
-function readNotify(sessionId: string, transcriptMtime: number): 'permission' | 'idle' | null {
+function readNotify(sessionId: string, transcriptMtime: number, dir = NOTIFY_DIR): 'permission' | 'idle' | null {
   try {
-    const p = join(NOTIFY_DIR, sessionId);
+    const p = join(dir, sessionId);
     const st = statSync(p);
     if (st.mtimeMs <= transcriptMtime) return null; // transcript 已往后写 = 已回应
     let type = '';
@@ -101,9 +101,9 @@ function readNotify(sessionId: string, transcriptMtime: number): 'permission' | 
  *  晚于(或等于)transcript 最后写入 → 这一轮确实结束了——权威信号,不靠尾部是否 end_turn。
  *  解决「末块停在 tool_result / 未 end_turn(被工具收尾)→ 误判执行中(黄)」。
  *  下一轮一开,transcript 写到标记之后 → 标记自动失效,回到尾部判定。 */
-function readDone(sessionId: string, transcriptMtime: number): boolean {
+function readDone(sessionId: string, transcriptMtime: number, dir = DONE_DIR): boolean {
   try {
-    return statSync(join(DONE_DIR, sessionId)).mtimeMs >= transcriptMtime;
+    return statSync(join(dir, sessionId)).mtimeMs >= transcriptMtime;
   } catch {
     return false; // 没有 done 文件
   }
@@ -279,6 +279,60 @@ function deriveState(kind: RawKind | null): { state: SessionState; detail: Sessi
   }
 }
 
+/** 存活进程(pgrep + lsof + ps eww 归一化后的结果)。 */
+export interface LiveProc {
+  pid: number;
+  cwd: string;
+  uuid: string | null;
+}
+/** 一个会话文件的索引项。 */
+export interface JsonlRec {
+  sid: string;
+  path: string;
+  dir: string;
+  mtimeMs: number;
+}
+
+/** 把每个存活进程精确对到「它自己的那个会话」。纯函数(无 I/O),便于单测。
+ *   - 精确:进程 uuid → focus 映射的 sid 里取 jsonl mtime 最新且未认领的(同一 tab 先后多会话,活的是最新那个);
+ *   - 兜底:无 uuid / focus 没记 → 该进程 cwd 对应目录里取最新且未认领的 jsonl(非 Warp / 老会话)。
+ *  返回 sid → pid;显示集 = 它的 key —— 死进程 uuid 不在集中 → 杜绝僵尸,一进程一会话 → 杜绝张冠李戴。 */
+export function resolveLiveSessions(
+  liveProcs: LiveProc[],
+  jsonlBySid: Map<string, JsonlRec>,
+  jsonlsByDir: Map<string, JsonlRec[]>,
+  sidsByUuid: Map<string, string[]>,
+): Map<string, number> {
+  const claimed = new Set<string>(); // 已认领 sid
+  const pidBySid = new Map<string, number>();
+  const claimNewest = (cands: (JsonlRec | undefined)[]): JsonlRec | null => {
+    let best: JsonlRec | null = null;
+    for (const j of cands) if (j && !claimed.has(j.sid) && (!best || j.mtimeMs > best.mtimeMs)) best = j;
+    if (best) claimed.add(best.sid);
+    return best;
+  };
+  const resolveDir = (cwd: string): string | null => {
+    for (const d of encodeDirs(cwd)) if (jsonlsByDir.has(d)) return d;
+    return null;
+  };
+  // 先精确认领(免得兜底把精确进程要的 sid 抢走);剩下的进程进第二轮兜底。
+  const fallbackProcs: { pid: number; cwd: string }[] = [];
+  for (const proc of liveProcs) {
+    const picked =
+      proc.uuid && sidsByUuid.has(proc.uuid)
+        ? claimNewest(sidsByUuid.get(proc.uuid)!.map((sid) => jsonlBySid.get(sid)))
+        : null;
+    if (picked) pidBySid.set(picked.sid, proc.pid);
+    else fallbackProcs.push({ pid: proc.pid, cwd: proc.cwd });
+  }
+  for (const proc of fallbackProcs) {
+    const d = resolveDir(proc.cwd);
+    const picked = d ? claimNewest(jsonlsByDir.get(d)!) : null;
+    if (picked) pidBySid.set(picked.sid, proc.pid);
+  }
+  return pidBySid;
+}
+
 export class ClaudeCodeAdapter implements Adapter {
   readonly tool = 'claude';
   private cache = new Map<string, { mtimeMs: number; raw: RawParse | null }>();
@@ -414,36 +468,8 @@ export class ClaudeCodeAdapter implements Adapter {
       /* 无 focus 目录 → 全走 mtime 兜底 */
     }
 
-    // ③ 把每个存活进程精确对到「它的那个会话」。
-    //   精确:进程 uuid → focus 映射的 sid 里,取 jsonl mtime 最新且未认领的(同 tab 先后多会话,活的是最新那个)。
-    //   兜底:无 uuid / focus 没记 → 该进程 cwd 对应目录里,取最新且未认领的 jsonl(沿用旧启发式;非 Warp/老会话不回退)。
-    const claimed = new Set<string>(); // 已认领 sid
-    const pidBySid = new Map<string, number>();
-    const claimNewest = (cands: (J | undefined)[]): J | null => {
-      let best: J | null = null;
-      for (const j of cands) if (j && !claimed.has(j.sid) && (!best || j.mtimeMs > best.mtimeMs)) best = j;
-      if (best) claimed.add(best.sid);
-      return best;
-    };
-    const resolveDir = (cwd: string): string | null => {
-      for (const d of encodeDirs(cwd)) if (jsonlsByDir.has(d)) return d;
-      return null;
-    };
-    // 先精确认领(免得兜底把精确进程要的 sid 抢走);剩下的进程进第二轮兜底。
-    const fallbackProcs: { pid: number; cwd: string }[] = [];
-    for (const proc of this.liveProcs) {
-      const picked =
-        proc.uuid && sidsByUuid.has(proc.uuid)
-          ? claimNewest(sidsByUuid.get(proc.uuid)!.map((sid) => jsonlBySid.get(sid)))
-          : null;
-      if (picked) pidBySid.set(picked.sid, proc.pid);
-      else fallbackProcs.push({ pid: proc.pid, cwd: proc.cwd });
-    }
-    for (const proc of fallbackProcs) {
-      const d = resolveDir(proc.cwd);
-      const picked = d ? claimNewest(jsonlsByDir.get(d)!) : null;
-      if (picked) pidBySid.set(picked.sid, proc.pid);
-    }
+    // ③ 每个存活进程精确对到「它自己的会话」(纯逻辑抽到 resolveLiveSessions,已单测)。
+    const pidBySid = resolveLiveSessions(this.liveProcs, jsonlBySid, jsonlsByDir, sidsByUuid);
 
     // ④ 认领到的 sid = 要显示的存活会话:解析 + 缓存。
     type Entry = { path: string; id: string; mtimeMs: number; raw: RawParse; pid: number };
@@ -524,3 +550,7 @@ export class ClaudeCodeAdapter implements Adapter {
     return out;
   }
 }
+
+// 暴露纯逻辑给单元测试(仅供 *.test.ts 导入,运行时主流程不依赖这些再导出)。
+export { classify, deriveState, scanTitle, scanTail, parseRaw, readNotify, readDone, encodeDirs, projectName };
+export type { RawKind };
