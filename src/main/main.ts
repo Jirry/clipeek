@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, screen, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, screen, shell, globalShortcut } from 'electron';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { readFileSync } from 'node:fs';
@@ -35,6 +35,23 @@ function openTerminal(sessionId: string): void {
   acknowledge(sessionId); // 打开 tab = 已知晓 → 停止该会话绿闪(下次 poll 生效)
   const url = focusUrlFor(sessionId);
   if (url) shell.openExternal(url).catch((e) => console.error('[clipeek] openExternal fail', e));
+}
+
+// —— 全局快捷键:⌃⌥⌘J 跳到「该你了」的会话并聚焦其终端 ——
+// 待处理 = 红(异常)/ 黄闪(权限·提问·计划)/ 绿闪(刚结束·该你了);执行中/休眠/已退不算。
+// 多个就按状态优先级(红▸黄闪▸绿闪)+ 最近活动排序,反复按循环走一遍(≈从左到右走灯条上的待处理灯)。
+const JUMP_SHORTCUT = 'Control+Alt+Command+J'; // = ⌃⌥⌘J;三键修饰几乎零冲突。改键位改这里(以后可挪进 config)
+const ATTENTION_STATES = new Set<SessionState>(['error', 'needsInput', 'attention']);
+let lastJumpId: string | null = null;
+function jumpToNextAttention(): void {
+  const cands = latest
+    .filter((s) => ATTENTION_STATES.has(s.state))
+    .sort((a, b) => STATE_PRIORITY[a.state] - STATE_PRIORITY[b.state] || b.lastActivity - a.lastActivity);
+  if (!cands.length) return; // 没人需要你 → 静默
+  const i = lastJumpId ? cands.findIndex((s) => s.id === lastJumpId) : -1;
+  const next = cands[(i + 1) % cands.length]; // i=-1(首按/上次的已不在)→ 第 0 个=最紧急
+  lastJumpId = next.id;
+  openTerminal(next.id);
 }
 
 // 两套独立窗口,切换只是 show/hide:
@@ -616,10 +633,15 @@ app.whenReady().then(() => {
   setupTray();
   setupIpc();
   startPolling();
+  if (!globalShortcut.register(JUMP_SHORTCUT, jumpToNextAttention)) {
+    console.error('[clipeek] 全局快捷键注册失败(可能被别的程序占用):', JUMP_SHORTCUT);
+  }
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindows();
   });
 });
+
+app.on('will-quit', () => globalShortcut.unregisterAll()); // 退出时释放全局热键
 
 app.on('window-all-closed', () => {
   /* 保持后台 */
