@@ -46,6 +46,7 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: false # 无证书:别去找/试图签名
 
       - name: Upload build artifacts (CI)
+        if: github.event_name == 'workflow_dispatch' # 仅手动验证时存工件;tag 正式发布走下面的 Release,不重复双存
         uses: actions/upload-artifact@v4
         with:
           name: clipeek-macos
