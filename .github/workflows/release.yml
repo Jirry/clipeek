@@ -23,7 +23,9 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        # 用 npm install 而非 npm ci:lockfile 缺 vitest 带来的 esbuild 0.28 跨平台可选依赖,
+        # npm ci(严格)会报「Missing @esbuild/* from lock file」(macOS 上也会)。与 ci.yml 一致。
+        run: npm install --no-audit --no-fund
 
       - name: Build (TypeScript → dist)
         run: npm run build:prod
