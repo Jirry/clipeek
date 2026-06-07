@@ -22,7 +22,10 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        # 用 npm install 而非 npm ci:vitest 带进来的 esbuild 0.28 跨平台可选依赖在 lockfile 里不全
+        # (mac 上生成的锁文件没记 linux 的 @esbuild/linux-*),npm ci 会因此在 linux 上报错;
+        # npm install 按当前平台需要补齐即可,CI 测试用足够。
+        run: npm install --no-audit --no-fund
 
       - name: Typecheck
         run: npx tsc --noEmit
