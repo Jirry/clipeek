@@ -53,6 +53,8 @@ let sessions: Session[] = [];
 let config: Config = {
   x: null,
   y: null,
+  dockRight: true,
+  dockBottom: true,
   scale: 1,
   width: null,
   height: null,
@@ -61,10 +63,13 @@ let config: Config = {
   layout: 'bar',
   showNames: false,
   names: {},
+  shortcuts: { jump: 'Command+J', jumpAll: 'Command+Shift+J' },
+  launchAtLogin: false,
 };
 let dock = { bottom: true, right: true, dockH: 56, home: '' };
 let editingId: string | null = null;
-let highlightId: string | null = null; // ⌃⌥J 触发后高亮的会话 id(主进程下发,过会儿清空)
+let highlightId: string | null = null; // 当前被快捷键高亮的会话 id(主进程下发,过会儿清空)
+let scrollToHighlight = false; // 本次高亮由跳转触发 → fitBar 里把目标灯滚进可视区(清除高亮时不滚)
 let tipSession: Session | null = null; // 提示框窗:当前要显示的那条会话
 let tipContentW = 0; // 提示框内容宽 = 灯条玻璃宽(主进程下发)
 let pointerDown = false; // 状态条上指针按下中 → 抑制悬停提示框 + 暂停重渲染(保住捕获元素)
@@ -412,7 +417,16 @@ function fitBar(): void {
     const winW = config.width != null ? Math.max(config.width, minW) : minW;
     if (bar) bar.style.width = `${winW - p.left - p.right}px`;
     const scroll = app.querySelector('.bar-scroll') as HTMLElement | null;
-    if (scroll) scroll.scrollLeft = savedScrollLeft; // 宽度设好后恢复横向滚动位置
+    if (scroll) {
+      scroll.scrollLeft = savedScrollLeft; // 宽度设好后恢复横向滚动位置
+      if (scrollToHighlight && highlightId) {
+        // 跳到某盏灯:被滚出可视区就自动滚进来(切到最左那盏 → 自然滚回开头)
+        const cell = scroll.querySelector(`.cell[data-sid="${CSS.escape(highlightId)}"]`) as HTMLElement | null;
+        cell?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+        savedScrollLeft = scroll.scrollLeft; // 记住新位置,跨重渲染不跳回
+      }
+      scrollToHighlight = false;
+    }
     updateScrollFade(); // 宽度定后刷新边缘渐隐
     applyMarquee(); // 宽度定后判定哪些名字需要跑马灯
     const r = app.getBoundingClientRect();
@@ -543,7 +557,8 @@ async function init() {
     if (!editingId && !pointerDown) render();
   });
   window.clipeek.onJumpHighlight((id) => {
-    highlightId = id; // 高亮/取消高亮被 ⌃⌥J 触发的灯
+    highlightId = id; // 高亮/取消高亮被快捷键触发的灯
+    scrollToHighlight = id != null; // 跳转(非清除)时:把目标灯滚进可视区
     if (!editingId && !pointerDown) render();
   });
   if (ROLE === 'tip') {

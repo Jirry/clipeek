@@ -17,3 +17,11 @@ export function pickNextJump(sessions: Session[], lastJumpId: string | null): Se
   const i = lastJumpId ? cands.findIndex((s) => s.id === lastJumpId) : -1;
   return cands[(i + 1) % cands.length]; // i=-1 → 0;到尾回绕
 }
+
+// ⌘⇧J 的「下一个」:无视状态,在所有灯之间按灯条顺序循环(始终能切到任意一盏,含执行中 / 绿灯)。
+export function pickNextAny(sessions: Session[], lastJumpId: string | null): Session | null {
+  if (!sessions.length) return null;
+  const all = [...sessions].sort(byUrgency); // 与灯条同序;不过滤,囊括所有灯
+  const i = lastJumpId ? all.findIndex((s) => s.id === lastJumpId) : -1;
+  return all[(i + 1) % all.length];
+}

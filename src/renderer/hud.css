@@ -265,23 +265,25 @@ body {
     opacity: 0.5;
   }
 }
-/* ⌃⌥J 触发的灯:白色环(outline,不覆盖状态色光晕)+ 一次缩放脉冲,标出「跳到了这个」;
-   主进程几秒后清掉 .jumped → 自动恢复。放在状态规则之后 → 高亮期间盖掉黄闪/绿闪的 blink。 */
+/* ⌘⇧J 触发的灯:白色内环 + 灯「缩放脉冲两下」+ 一下变亮,标出「跳到了这个」;
+   主进程几秒后清掉 .jumped → 自动恢复。放在状态规则之后 → 高亮期间盖掉黄闪/绿闪的 blink。
+   注意:只用「内环 / 缩小 / 变亮」这类不超出灯本体的效果 —— 灯条容器 overflow:hidden(要横向滚动,改不了),
+   往外扩的 outline / 放大 / 外发光 / 涟漪都会被裁,所以不用。 */
 .light.jumped,
 .panel-dot.jumped {
-  outline: calc(2px * var(--scale)) solid rgba(255, 255, 255, 0.92);
-  outline-offset: calc(2px * var(--scale));
-  animation: jumpPop 0.42s ease-out;
+  /* !important:盖过竖排灯(panel-dot)在 JS 里内联设的 box-shadow 光晕 */
+  box-shadow: inset 0 0 0 calc(3px * var(--scale)) #fff !important;
+  animation: jumpHi 0.5s ease-in-out 2; /* 缩放脉冲两下 + 变亮;缩小不溢出,动态 + 变亮最抓眼 */
 }
-@keyframes jumpPop {
-  0% {
-    transform: scale(0.9);
-  }
-  45% {
-    transform: scale(1.5);
-  }
+@keyframes jumpHi {
+  0%,
   100% {
     transform: scale(1);
+    filter: brightness(1.15);
+  }
+  50% {
+    transform: scale(0.7);
+    filter: brightness(2.3);
   }
 }
 

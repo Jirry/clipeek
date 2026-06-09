@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, screen, shell, globalShortcut } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, nativeTheme, screen, shell, globalShortcut } from 'electron';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { readFileSync } from 'node:fs';
@@ -8,7 +8,11 @@ import { loadConfig, saveConfig } from './store';
 import { ClaudeCodeAdapter } from './adapters/claude';
 import { installHook, FOCUS_DIR } from './hook';
 import { acknowledge } from './ack';
-import { pickNextJump } from './jump';
+import { pickNextJump, pickNextAny } from './jump';
+
+// userData 目录固定为小写 'clipeek',不随 productName(CliPeek)变:否则打包版 app.getName()=CliPeek 会让
+// userData 目录改名,在大小写敏感文件系统上读不到旧 config(位置/缩放/改名/快捷键)。须早于任何 getPath('userData')。
+app.setPath('userData', join(app.getPath('appData'), 'clipeek'));
 
 /** 双击灯 → 打开/聚焦对应终端 tab。读 hook 记下的聚焦深链(目前 Warp 的 WARP_FOCUS_URL)。 */
 const WARP_URL_RE = /^warp[a-z]*:\/\//i; // 仅放行 warp:// / warposs:// 深链
@@ -38,16 +42,38 @@ function openTerminal(sessionId: string): void {
   if (url) shell.openExternal(url).catch((e) => console.error('[clipeek] openExternal fail', e));
 }
 
-// —— 全局快捷键:⌃⌥J 跳到下一个会话、聚焦其终端、并高亮该灯 ——
-// 选目标的纯逻辑在 ./jump 的 pickNextJump(已单测):优先 红▸黄闪▸黄▸绿闪 循环,都没有则在所有绿灯里循环。
-const JUMP_SHORTCUT = 'Control+Alt+J'; // = ⌃⌥J;两修饰键、左下相邻好按,且非系统快捷键。改键位改这里(以后可挪进 config)
-let lastJumpId: string | null = null;
-function jumpToNext(): void {
-  const next = pickNextJump(latest, lastJumpId);
-  if (!next) return; // 没有可跳的会话(只剩执行中外的…实为 exited/无会话)→ 静默
+// —— 全局快捷键:跳到下一个会话、聚焦其终端、并高亮该灯 ——
+//  ⌘J  = 智能(pickNextJump,已单测):优先 红▸黄闪▸黄▸绿闪 循环,这些都没有才在所有绿灯里循环。
+//  ⌘⇧J = 全量(pickNextAny):无视状态,在所有灯之间按顺序循环 —— 始终能切到任意一盏。
+//  两者共用同一个「当前选中」游标 lastJumpId,「下一个」总从当前那盏往后走。
+let lastJumpId: string | null = null; // 两个快捷键共用的「当前选中」游标
+function doJump(next: Session | null): void {
+  if (!next) return; // 没有可跳的灯 → 静默
   lastJumpId = next.id;
   openTerminal(next.id);
-  setJumpHighlight(next.id); // 高亮被触发的灯,过会儿自动清;循环再按则换新、旧的立即恢复
+  setJumpHighlight(next.id); // 高亮被触发的灯,过会儿自动清;再按换新、旧的立即恢复
+}
+function jumpToNext(): void {
+  doJump(pickNextJump(latest, lastJumpId)); // ⌘J
+}
+function jumpToNextAny(): void {
+  doJump(pickNextAny(latest, lastJumpId)); // ⌘⇧J
+}
+// 按 config.shortcuts 注册全局键(设置里改键 → 调它重注册)。记录是否有键注册失败,供设置 UI 提示。
+let shortcutConflict = false;
+function registerShortcuts(): void {
+  globalShortcut.unregisterAll();
+  shortcutConflict = false;
+  const reg = (accel: string, fn: () => void) => {
+    if (!accel) return;
+    try {
+      if (!globalShortcut.register(accel, fn)) shortcutConflict = true;
+    } catch {
+      shortcutConflict = true; // 非法 accelerator 字符串
+    }
+  };
+  reg(config.shortcuts.jump, jumpToNext);
+  reg(config.shortcuts.jumpAll, jumpToNextAny);
 }
 
 // 把「当前高亮哪个会话」下发给灯条/列表窗;HIGHLIGHT_MS 后自动清空(发 null)。
@@ -70,12 +96,12 @@ function setJumpHighlight(id: string | null): void {
 let barWin: BrowserWindow | null = null;
 let listWin: BrowserWindow | null = null;
 let tipWin: BrowserWindow | null = null; // 横排悬停某个灯时弹出的提示框(名字可编辑 + 路径)
+let settingsWin: BrowserWindow | null = null; // 设置窗(托盘「设置…」打开)
 let tray: Tray | null = null;
 let config: Config = loadConfig();
 let latest: Session[] = [];
 
 const adapters: Adapter[] = [new ClaudeCodeAdapter()];
-const SCALE_STEP = 0.2;
 // 每个窗口各自的最小尺寸(渲染层上报):状态条和列表的最小宽高不同,不能共用一个全局值
 const winMin = new Map<number, { w: number; h: number }>();
 function minOf(win: BrowserWindow): { w: number; h: number } {
@@ -100,22 +126,26 @@ function defaultPos(w: number, h: number, display?: Electron.Display) {
   const b = (display ?? screen.getPrimaryDisplay()).bounds;
   return { x: b.x + b.width - w, y: b.y + b.height - h };
 }
-// 恢复状态条位置:config.x/y 有效且落在某个显示器内才用,否则回默认右下角(防副屏拔掉后跑到屏外)。
+// 恢复状态条位置:按上次贴的「角(dockRight/dockBottom)+ 屏」用当前宽高实时贴边。
+// 状态条宽随会话数自适应,绝对左上角内容宽一变就偏 → 只记「贴哪条边」,落点每次现算。
+// 用上次左上角定位「在哪块屏」;getDisplayNearestPoint 在那块屏被拔掉时自动回退到最近的屏。
 function restoredBarPos(w: number, h: number) {
-  if (typeof config.x === 'number' && typeof config.y === 'number') {
-    const pt = { x: config.x, y: config.y };
-    const d = screen.getDisplayMatching({ x: config.x, y: config.y, width: w, height: h });
-    const a = d.bounds;
-    if (pt.x + w > a.x && pt.x < a.x + a.width && pt.y + h > a.y && pt.y < a.y + a.height) return pt; // 仍可见
-  }
-  return defaultPos(w, h);
+  const ref = config.x != null && config.y != null ? { x: config.x, y: config.y } : null;
+  const b = (ref ? screen.getDisplayNearestPoint(ref) : screen.getPrimaryDisplay()).bounds;
+  return {
+    x: config.dockRight ? b.x + b.width - w : b.x,
+    y: config.dockBottom ? b.y + b.height - h : b.y,
+  };
 }
 
 function makeWin(role: 'bar' | 'list' | 'tip', show: boolean): BrowserWindow {
-  const pos = role === 'bar' ? restoredBarPos(320, 80) : defaultPos(320, 80); // 状态条恢复上次位置
+  // 状态条按「保存过的宽/高」建窗(没存过才用 320×80 占位):否则先建成占位宽、fit 时会把右/下贴边错锚到占位尺寸 → 留出缝
+  const initW = role === 'bar' && config.width != null ? config.width : 320;
+  const initH = role === 'bar' && config.height != null ? config.height : 80;
+  const pos = role === 'bar' ? restoredBarPos(initW, initH) : defaultPos(320, 80); // 状态条恢复上次位置
   const w = new BrowserWindow({
-    width: 320,
-    height: 80,
+    width: initW,
+    height: initH,
     x: pos.x,
     y: pos.y,
     show,
@@ -184,6 +214,7 @@ function pushConfig() {
   barWin?.webContents.send('config', c);
   listWin?.webContents.send('config', c);
   tipWin?.webContents.send('config', c); // 提示框也要收 config,否则缩放/显名变化它不跟
+  settingsWin?.webContents.send('config', c); // 设置窗也同步(托盘改了它要跟着更新)
 }
 function pushDock() {
   const p = dockPayload();
@@ -355,7 +386,7 @@ function dragTick() {
   if (!dragWin || !dragAnchor) return;
   const c = screen.getCursorScreenPoint();
   const b = dragWin.getBounds();
-  const area = screen.getDisplayMatching(b).bounds;
+  const area = screen.getDisplayNearestPoint(c).bounds; // 夹在「光标所在那块屏」内 → 可跨屏(光标过去窗口跟过去),又进不了副屏外的空隙
   // 窗口比屏还宽/高时上下界反转 → 用 min/max 兜底,否则被钉在边上拖不动
   const loX = Math.min(area.x, area.x + area.width - b.width);
   const hiX = Math.max(area.x, area.x + area.width - b.width);
@@ -457,6 +488,7 @@ function stopResize() {
       if (vert) config.height = bnd.height; // 高度是确定值,只存被拉的那维即可
       config.x = bnd.x; // 左缘/角拉伸会移动 x → 记住位置
       config.y = bnd.y;
+      recordBarDock(bnd); // 拉伸后也更新贴角(启动按角贴边)
     }
     saveConfig(config);
     pushConfig();
@@ -464,12 +496,19 @@ function stopResize() {
   resizeWin = null;
   resizeAnchor = null;
 }
+// 记下状态条当前贴的角:窗口中心在所在屏 workArea 的哪半边。供启动时按角贴边。
+function recordBarDock(b: Electron.Rectangle) {
+  const wa = screen.getDisplayMatching(b).workArea;
+  config.dockRight = b.x + b.width / 2 > wa.x + wa.width / 2;
+  config.dockBottom = b.y + b.height / 2 > wa.y + wa.height / 2;
+}
 // 记住状态条位置(供拖动结束时调用)
 function saveBarPos() {
   if (!barWin) return;
   const b = barWin.getBounds();
   config.x = b.x;
   config.y = b.y;
+  recordBarDock(b); // 同时记住贴的是哪个角(启动按角贴边)
   saveConfig(config);
 }
 
@@ -502,51 +541,11 @@ function setLayout(layout: 'bar' | 'list') {
 }
 function buildMenu(): Menu {
   return Menu.buildFromTemplate([
+    // 菜单只留高频的布局切换 + 设置入口 + 退出;缩放/显名/重置位置/恢复大小都进设置窗,不再重复。
     { label: config.layout === 'list' ? '切换横排' : '切换竖排', click: () => setLayout(config.layout === 'list' ? 'bar' : 'list') },
-    {
-      label: config.showNames ? '横排:隐藏灯下名字' : '横排:显示灯下名字',
-      enabled: config.layout !== 'list',
-      click: () => {
-        config.showNames = !config.showNames;
-        saveConfig(config);
-        pushConfig();
-      },
-    },
-    { label: '放大', enabled: config.scale < SCALE_MAX, click: () => setScale(config.scale + SCALE_STEP) },
-    { label: '缩小', enabled: config.scale > SCALE_MIN, click: () => setScale(config.scale - SCALE_STEP) },
-    {
-      label: '恢复默认大小',
-      // 按当前模式判断是否可恢复 + 只重置当前模式那套尺寸
-      enabled:
-        config.scale !== 1 ||
-        (config.layout === 'list'
-          ? config.listWidth !== null || config.listHeight !== null
-          : config.width !== null || config.height !== null),
-      click: () => {
-        if (config.layout === 'list') {
-          config.listWidth = null; // 竖排:列表宽高回到默认
-          config.listHeight = null;
-        } else {
-          config.width = null; // 横排:状态条宽回自适应
-          config.height = null; // 状态条高回贴合 Dock
-        }
-        setScale(1); // scale 复位(内部 saveConfig + pushConfig,一并保存上面几项)
-      },
-    },
-    {
-      label: '重置位置',
-      click: () => {
-        const a = activeWin();
-        if (!a) return;
-        const [w, h] = a.getSize();
-        const { x, y } = defaultPos(w, h, screen.getDisplayMatching(a.getBounds())); // 回到当前所在屏的右下角
-        a.setPosition(x, y);
-        if (a === barWin) saveBarPos(); // 重置位置后也记住
-        pushDock();
-      },
-    },
     { type: 'separator' },
-    { label: '退出 clipeek', role: 'quit' },
+    { label: '设置…', click: () => openSettings() },
+    { label: '退出 CliPeek', click: () => app.quit() }, // 不用 role:'quit'(macOS 会给它带图标 → 整列文字右移)
   ]);
 }
 function setScale(next: number) {
@@ -554,10 +553,86 @@ function setScale(next: number) {
   saveConfig(config);
   pushConfig();
 }
+
+// —— 设置窗 ——
+function openSettings(): void {
+  if (process.platform === 'darwin') app.dock?.show(); // 设置窗期间进 Dock + ⌘Tab,点别处也能切回
+  if (settingsWin && !settingsWin.isDestroyed()) {
+    app.focus({ steal: true });
+    settingsWin.show();
+    settingsWin.focus();
+    return;
+  }
+  settingsWin = new BrowserWindow({
+    width: 480,
+    height: 280,
+    title: 'CliPeek 设置',
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    show: false,
+    titleBarStyle: 'hiddenInset', // 标题栏透明融入内容(交通灯浮在顶部白区,像 AirBuddy)
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1a1816' : '#e9e7e1', // 内容区底色(暖中性),减少首帧闪白
+    webPreferences: {
+      preload: join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  settingsWin.loadFile(join(__dirname, 'renderer', 'settings.html'));
+  settingsWin.once('ready-to-show', () => {
+    app.focus({ steal: true }); // accessory app 需主动激活,设置窗才能拿键盘(录快捷键要焦点)
+    settingsWin?.show();
+    settingsWin?.focus();
+  });
+  settingsWin.on('closed', () => {
+    settingsWin = null;
+    if (process.platform === 'darwin') app.dock?.hide(); // 关掉设置窗 → 退出 Dock,回到纯菜单栏 HUD
+  });
+}
+// 设置窗下发的整批改动:合并 → 存 → 按需触发副作用(重注册键 / 登录项 / 布局)→ 推给各窗。
+function applySettings(partial: Partial<Config>): void {
+  if (typeof partial.scale === 'number') {
+    partial.scale = Math.round(Math.min(SCALE_MAX, Math.max(SCALE_MIN, partial.scale)) * 100) / 100;
+  }
+  const layoutChanged = partial.layout !== undefined && partial.layout !== config.layout;
+  Object.assign(config, partial);
+  saveConfig(config);
+  if (partial.shortcuts) {
+    registerShortcuts();
+    settingsWin?.webContents.send('settings:shortcutResult', { conflict: shortcutConflict });
+  }
+  if (partial.launchAtLogin !== undefined) app.setLoginItemSettings({ openAtLogin: config.launchAtLogin });
+  if (layoutChanged) setLayout(config.layout); // 含 show/hide + save + push
+  else pushConfig();
+}
+// 设置窗里的「动作型」按钮(非配置值):重置位置 / 恢复默认大小 —— 与托盘同名项一致。
+function settingsAction(name: string): void {
+  if (name === 'resetPosition') {
+    const a = activeWin();
+    if (!a) return;
+    const [w, h] = a.getSize();
+    const { x, y } = defaultPos(w, h, screen.getDisplayMatching(a.getBounds()));
+    a.setPosition(x, y);
+    if (a === barWin) saveBarPos();
+    pushDock();
+  } else if (name === 'resetSize') {
+    if (config.layout === 'list') {
+      config.listWidth = null;
+      config.listHeight = null;
+    } else {
+      config.width = null;
+      config.height = null;
+    }
+    setScale(1); // scale 复位 + save + push(顺带保存上面清空的尺寸)
+  }
+}
+
 function setupTray() {
   try {
     tray = new Tray(nativeImage.createEmpty());
-    tray.setToolTip('clipeek — 所有 AI agent 一眼看全');
+    tray.setToolTip('CliPeek — 所有 AI agent 一眼看全');
     tray.setTitle(' ⚪ 0');
     const refresh = () => tray?.setContextMenu(buildMenu());
     tray.on('mouse-down', refresh);
@@ -622,6 +697,16 @@ function setupIpc() {
     pushSessions();
   });
   ipcMain.handle('hud:getConfig', () => config);
+  ipcMain.on('settings:open', () => openSettings());
+  ipcMain.on('settings:set', (_e, partial: Partial<Config>) => applySettings(partial));
+  ipcMain.on('settings:action', (_e, name: string) => settingsAction(name));
+  ipcMain.on('settings:resize', (_e, h: number) => {
+    if (!settingsWin || settingsWin.isDestroyed()) return;
+    const [w, curH] = settingsWin.getContentSize();
+    const want = Math.max(160, Math.round(h));
+    // 高度真变了(切 tab)才调;同 tab 内点控件高度不变 → 不 resize → 不抖
+    if (Math.abs(want - curH) > 1) settingsWin.setContentSize(w, want);
+  });
 }
 
 function startPolling() {
@@ -642,8 +727,10 @@ app.whenReady().then(() => {
   setupTray();
   setupIpc();
   startPolling();
-  if (!globalShortcut.register(JUMP_SHORTCUT, jumpToNext)) {
-    console.error('[clipeek] 全局快捷键注册失败(可能被别的程序占用):', JUMP_SHORTCUT);
+  registerShortcuts(); // 按 config.shortcuts 注册 ⌘J / ⌘⇧J
+  // 仅当 OS 登录项与配置不一致才写(默认都 false 时不白调 → 免去 dev 下的 Operation not permitted 噪声)
+  if (app.getLoginItemSettings().openAtLogin !== config.launchAtLogin) {
+    app.setLoginItemSettings({ openAtLogin: config.launchAtLogin });
   }
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindows();

@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { join, basename } from 'node:path';
 import { Adapter, Session, SessionState, SessionDetail } from '../../shared/types';
 import { isAcknowledged } from '../ack';
-import { NOTIFY_DIR, DONE_DIR, FOCUS_DIR } from '../hook';
+import { NOTIFY_DIR, DONE_DIR, BUSY_DIR, FOCUS_DIR } from '../hook';
 
 // ClaudeCodeAdapter:读 ~/.claude/projects/<编码cwd>/<uuid>.jsonl 推断会话状态。
 // 状态判断(已用真实日志验证):
@@ -13,7 +13,7 @@ import { NOTIFY_DIR, DONE_DIR, FOCUS_DIR } from '../hook';
 //   末块 tool_use(AskUserQuestion/ExitPlanMode 无结果) → needsInput(阻塞等你回应)
 //   末块 text + 文件还在写    → working/replying
 //   末块 text + 文件停写      → done(完成·等你)
-//   存活靠 pgrep claude + lsof 拿各进程 cwd;cwd 无存活进程 → 该会话 exited。
+//   存活靠 ps 枚举 claude 进程 + lsof 拿各进程 cwd;cwd 无存活进程 → 该会话 exited。
 
 const PROJECTS_DIR = join(homedir(), '.claude', 'projects');
 const ATTENTION_FRESH_MS = 5 * 60 * 1000; // 刚结束多久内算「该你了」(绿闪)
@@ -106,6 +106,17 @@ function readDone(sessionId: string, transcriptMtime: number, dir = DONE_DIR): b
     return statSync(join(dir, sessionId)).mtimeMs >= transcriptMtime;
   } catch {
     return false; // 没有 done 文件
+  }
+}
+
+/** 读 UserPromptSubmit hook 的 busy 标记:用户已提交、本轮还在处理。
+ *  busy mtime > transcript → 用户提交晚于 jsonl 最后写入(新版 Claude Code 写盘整轮缓冲)→ 这一轮在执行中,
+ *  别拿 jsonl 还停着的上一轮完成态(绿)糊弄。jsonl 写入本轮内容(mtime 追上)后 busy 自动失效,回到尾部判定。 */
+function readBusy(sessionId: string, transcriptMtime: number, dir = BUSY_DIR): boolean {
+  try {
+    return statSync(join(dir, sessionId)).mtimeMs > transcriptMtime;
+  } catch {
+    return false; // 没有 busy 标记
   }
 }
 
@@ -342,24 +353,27 @@ export class ClaudeCodeAdapter implements Adapter {
   private liveTs = 0;
   private diagWarned = new Set<string>(); // 已就「解析不出状态」打过日志的会话 id(每会话每进程只打一次,防刷屏)
 
-  /** pgrep claude → lsof 拿每个进程 cwd + ps eww 拿 tab uuid。带 TTL 缓存。
+  /** ps 枚举 claude 进程 → lsof 拿每个进程 cwd + ps eww 拿 tab uuid。带 TTL 缓存。
    *  关键:区分「确实没有 claude 进程」(清空)和「pgrep/lsof 调用本身失败」(保留上次结果,
    *  否则一次偶发失败会让所有会话瞬间判退、列表清空)。uuid 拿不到(非 Warp/ps 失败)→ 该进程走 mtime 兜底。 */
   private refreshLiveness(now: number): void {
     if (now - this.liveTs < LIVENESS_TTL) return;
     this.liveTs = now;
 
-    let pidOut: string;
+    // 枚举存活的 Claude Code 进程。不用 `pgrep -x claude`:新版 Claude Code(≈2.1.16x 起)把进程
+    // 标题改成了版本号,pgrep 按内核进程名匹配会漏掉这些会话(实测漏当前会话);ps 的 comm 对新旧版
+    // 都仍解析为 claude。ps 成功但无 claude = 确实无存活(清空);ps 调用异常 = 保留上次结果。
+    let psOut: string;
     try {
-      pidOut = execFileSync('pgrep', ['-x', 'claude'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-    } catch (e: any) {
-      if (e && e.status === 1) this.liveProcs = []; // 退出码 1 = 没有匹配进程 = 确实无存活
-      return; // 其它错误 = 调用异常 → 保留上次结果
+      psOut = execFileSync('ps', ['-A', '-o', 'pid=,comm='], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    } catch {
+      return; // ps 调用异常 → 保留上次结果,避免偶发失败把所有会话误判退出
     }
-    const pids = pidOut
-      .split('\n')
-      .map((s) => parseInt(s.trim(), 10))
-      .filter((n) => n > 0);
+    const pids: number[] = [];
+    for (const line of psOut.split('\n')) {
+      const m = line.match(/^\s*(\d+)\s+(.+)$/); // 行首 pid + comm(comm 可能是完整路径,取基名)
+      if (m && basename(m[2].trim()) === 'claude') pids.push(parseInt(m[1], 10));
+    }
     if (!pids.length) {
       this.liveProcs = [];
       return;
@@ -509,6 +523,11 @@ export class ClaudeCodeAdapter implements Adapter {
       if (notify === 'permission') {
         state = 'needsInput'; // 硬阻塞 → 黄闪
         detail = 'permission';
+      } else if (readBusy(e.id, e.mtimeMs)) {
+        // 用户已提交新一轮,但 Claude Code 写 jsonl 滞后(实测整轮缓冲,jsonl 还停在上一轮 end_turn)。
+        // 不拿那个旧的完成态(绿)糊弄 → 强制执行中;等 jsonl 写入本轮内容、mtime 追上,busy 自动失效。
+        state = 'working';
+        detail = 'thinking';
       } else {
         ({ state, detail } = deriveState(e.raw.kind));
         // 权威 turn-end 信号:Stop hook 写的 done 标记晚于 transcript → 这一轮真结束了,
@@ -552,5 +571,5 @@ export class ClaudeCodeAdapter implements Adapter {
 }
 
 // 暴露纯逻辑给单元测试(仅供 *.test.ts 导入,运行时主流程不依赖这些再导出)。
-export { classify, deriveState, scanTitle, scanTail, parseRaw, readNotify, readDone, encodeDirs, projectName };
+export { classify, deriveState, scanTitle, scanTail, parseRaw, readNotify, readDone, readBusy, encodeDirs, projectName };
 export type { RawKind };

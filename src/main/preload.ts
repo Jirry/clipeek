@@ -90,6 +90,24 @@ const api = {
     ipcRenderer.on('jump:highlight', h);
     return () => ipcRenderer.removeListener('jump:highlight', h);
   },
+  // —— 设置窗 ——
+  openSettings(): void {
+    ipcRenderer.send('settings:open');
+  },
+  settingsSet(partial: Partial<Config>): void {
+    ipcRenderer.send('settings:set', partial);
+  },
+  settingsAction(name: string): void {
+    ipcRenderer.send('settings:action', name);
+  },
+  settingsResize(height: number): void {
+    ipcRenderer.send('settings:resize', height);
+  },
+  onShortcutResult(cb: (r: { conflict: boolean }) => void): () => void {
+    const h = (_e: unknown, r: { conflict: boolean }) => cb(r);
+    ipcRenderer.on('settings:shortcutResult', h);
+    return () => ipcRenderer.removeListener('settings:shortcutResult', h);
+  },
 };
 
 contextBridge.exposeInMainWorld('clipeek', api);

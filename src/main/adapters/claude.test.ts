@@ -10,6 +10,7 @@ import {
   parseRaw,
   readNotify,
   readDone,
+  readBusy,
   encodeDirs,
   projectName,
   resolveLiveSessions,
@@ -184,6 +185,16 @@ describe('readNotify / readDone(mtime 相对 transcript)', () => {
     const mu = marker('unk-sid', 'something_else', 3_000_000);
     expect(readNotify('unk-sid', mu - 1000, TMP)).toBeNull();
     expect(readNotify('missing', 0, TMP)).toBeNull();
+  });
+});
+
+describe('readBusy(用户已提交、jsonl 写盘滞后)', () => {
+  it('busy 标记晚于 transcript → 执行中;jsonl 追上(≥busy)→ 失效', () => {
+    const m = marker('busy-sid', 'busy', 4_000_000);
+    expect(readBusy('busy-sid', m - 1000, TMP)).toBe(true); // jsonl 还停在上一轮(更早)→ 处理中,别显完成态
+    expect(readBusy('busy-sid', m, TMP)).toBe(false); // 同刻(jsonl 已写本轮 user)→ 交给 jsonl 判,不需 busy
+    expect(readBusy('busy-sid', m + 5000, TMP)).toBe(false); // jsonl 已写入本轮内容、追上 → busy 失效
+    expect(readBusy('no-such-sid', 0, TMP)).toBe(false);
   });
 });
 

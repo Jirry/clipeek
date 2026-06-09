@@ -10,12 +10,15 @@ const targets = [
   { entryPoints: ['src/main/main.ts'], outfile: 'dist/main.js', platform: 'node', format: 'cjs', external: ['electron'] },
   { entryPoints: ['src/main/preload.ts'], outfile: 'dist/preload.js', platform: 'node', format: 'cjs', external: ['electron'] },
   { entryPoints: ['src/renderer/hud.ts'], outfile: 'dist/renderer/hud.js', platform: 'browser', format: 'iife' },
+  { entryPoints: ['src/renderer/settings.ts'], outfile: 'dist/renderer/settings.js', platform: 'browser', format: 'iife' },
 ];
 
 async function copyStatic() {
   await mkdir('dist/renderer', { recursive: true });
   await copyFile('src/renderer/index.html', 'dist/renderer/index.html');
   await copyFile('src/renderer/hud.css', 'dist/renderer/hud.css');
+  await copyFile('src/renderer/settings.html', 'dist/renderer/settings.html');
+  await copyFile('src/renderer/settings.css', 'dist/renderer/settings.css');
 }
 
 await copyStatic();

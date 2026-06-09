@@ -1,7 +1,7 @@
 import { app } from 'electron';
 import { readFileSync, writeFileSync, renameSync, unlinkSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { Config, DEFAULT_CONFIG, SCALE_MIN, SCALE_MAX } from '../shared/types';
+import { Config, DEFAULT_CONFIG, DEFAULT_SHORTCUTS, SCALE_MIN, SCALE_MAX } from '../shared/types';
 
 // 极简 JSON 持久化:窗口位置、缩放、名字显隐、自定义会话名。
 // 写在 Electron userData 目录,跨启动保留(满足「记住位置」「重命名」)。
@@ -24,9 +24,16 @@ function sanitize(raw: unknown): Config {
     typeof o.scale === 'number' && Number.isFinite(o.scale)
       ? Math.min(SCALE_MAX, Math.max(SCALE_MIN, o.scale))
       : DEFAULT_CONFIG.scale;
+  const sc = (o.shortcuts && typeof o.shortcuts === 'object' && !Array.isArray(o.shortcuts) ? o.shortcuts : {}) as Record<string, unknown>;
+  const shortcuts = {
+    jump: typeof sc.jump === 'string' && sc.jump ? sc.jump : DEFAULT_SHORTCUTS.jump,
+    jumpAll: typeof sc.jumpAll === 'string' && sc.jumpAll ? sc.jumpAll : DEFAULT_SHORTCUTS.jumpAll,
+  };
   return {
     x: finiteOrNull(o.x), // 位置可为负(副屏在主屏左侧)
     y: finiteOrNull(o.y),
+    dockRight: typeof o.dockRight === 'boolean' ? o.dockRight : DEFAULT_CONFIG.dockRight,
+    dockBottom: typeof o.dockBottom === 'boolean' ? o.dockBottom : DEFAULT_CONFIG.dockBottom,
     scale,
     width: posOrNull(o.width),
     height: posOrNull(o.height),
@@ -35,6 +42,8 @@ function sanitize(raw: unknown): Config {
     layout: o.layout === 'list' ? 'list' : 'bar',
     showNames: typeof o.showNames === 'boolean' ? o.showNames : DEFAULT_CONFIG.showNames,
     names,
+    shortcuts,
+    launchAtLogin: typeof o.launchAtLogin === 'boolean' ? o.launchAtLogin : DEFAULT_CONFIG.launchAtLogin,
   };
 }
 

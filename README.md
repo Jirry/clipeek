@@ -1,72 +1,99 @@
-# clipeek
+# CliPeek
 
-> See all your AI agents at a glance, tucked in the corner.
+> 所有 AI agent,角落里一眼看全。
 
 [![CI](https://github.com/Jirry/clipeek/actions/workflows/ci.yml/badge.svg)](https://github.com/Jirry/clipeek/actions/workflows/ci.yml)
 
-**clipeek**（瞄一眼)is a tiny, always‑on‑top macOS HUD that watches your local AI CLI sessions and shows each one as a traffic‑light dot — so you can tell at a glance which agent is working, which needs you, and which is done, and jump straight to its terminal with a click, without hunting through tabs.
+中文 · [English](README.en.md)
 
-English · [中文](README.zh-CN.md)
+**CliPeek**(瞄一眼)是一个常驻屏幕角落、置顶悬浮的 macOS HUD,实时监控你本地的 AI CLI 会话,把每个会话显示成一颗红绿灯——不用在一堆终端标签页里翻找,一眼就知道哪个 agent 在干活、哪个在等你、哪个已经完事,点一下或按快捷键就能跳到它的终端。
 
-<!-- TODO: add a screenshot / GIF of the HUD here -->
+<!-- TODO: 这里放一张 HUD 的截图 / GIF -->
 
-## Lights
+## 灯语
 
-| Light | Meaning |
+| 灯 | 含义 |
 | --- | --- |
-| 🟢 Green | Done — idle, waiting for you |
-| 🟢 Green, blinking | Done, your turn — just finished, or the agent is waiting for your input |
-| 🟡 Amber | Working — thinking, running a tool, or replying |
-| 🟡 Amber, blinking | Needs you — permission prompt, a question, or plan approval |
-| 🔴 Red | Error — API error / crash |
+| 🟢 绿·常亮 | 完成——空闲,等你 |
+| 🟢 绿·闪烁 | 完成·该你了——刚结束,或 agent 在等你输入 |
+| 🟡 黄·常亮 | 执行中——思考 / 跑命令 / 流式回复 |
+| 🟡 黄·闪烁 | 需要你——权限弹窗 / 提问 / 计划审批 |
+| 🔴 红 | 异常——API 报错 / 崩溃 |
 
-Dots are ordered by urgency (red ▸ blinking amber ▸ amber ▸ blinking green ▸ green), newest activity first within a color. Closed sessions disappear on their own.
+按紧急程度排序(红 ▸ 黄闪 ▸ 黄 ▸ 绿闪 ▸ 绿),同色按最近活动排前。已关闭的会话会自动消失。
 
-## Features
+## 快捷键
 
-- **One dot per live session**, in a compact bar — with the session's name under each (toggleable).
-- **Click** a dot (or a list row) → jump straight to that session's terminal tab.
-- **Hover** a dot → a tooltip with the session's name and working directory; click ✏︎ to rename it (local only — your real session name is untouched).
-- **Two layouts**, switchable from the tray menu:
-  - **Bar** — a horizontal strip of dots, parked along your Dock.
-  - **List** — a vertical panel in a screen corner, with a one‑line summary, names, paths and idle time.
-- **Move / scroll / resize / zoom** — drag the handle to move; drag the dots to scroll; drag the edges to resize; zoom from the menu. Position, size and renames are remembered across restarts.
-- **Menu‑bar tray** — no Dock icon, no window chrome; the tray title shows an aggregate light + the number of live sessions.
+| 快捷键 | 效果 |
+| --- | --- |
+| **`⌘J`**(Command + J) | **智能跳转**:优先跳到最需要你关注的会话 |
+| **`⌘⇧J`**(Command + Shift + J) | **全量跳转**:无视状态,在所有灯之间按顺序循环 |
+| **单击灯 / 列表行** | 跳到该会话所在的终端标签页 |
 
-## Requirements
+两个快捷键都会**聚焦目标会话的终端**,并把那盏灯**白环 + 脉冲高亮约 2.5 秒**(连按跳到下一个时,上一个立即复原);两者共用同一个「当前选中」,「下一个」总是从当前那盏往后走。
+
+- **`⌘J`(智能)**:先在「活跃」会话里循环,按紧急度 **🔴 异常 ▸ 🟡 黄闪(需介入)▸ 🟡 执行中 ▸ 🟢 绿闪(该你了)**;这些活跃会话一个都没有时,才退而在所有 🟢 绿灯(已完成 / 空闲)里循环。
+- **`⌘⇧J`(全量)**:无视状态,在**所有灯**之间按灯条顺序循环——始终能切到任意一盏(含执行中、绿灯)。
+
+> 两个快捷键都可在**设置**里自定义(录制你想要的组合)。注意 `⌘J` 是全局快捷键,会盖过其它应用里的 ⌘J。
+
+## 功能
+
+- **每个存活会话一颗灯**,排成一条;灯下可显示会话名(可开关)。
+- **悬停**某颗灯 → 弹出该会话的名字和工作目录;点 ✏︎ 可改名(仅本地显示名,不动你的真实会话)。
+- **两种布局**,一键切换:
+  - **横排** —— 一条横向灯带,贴着 Dock。
+  - **竖排** —— 屏幕角落的竖向列表,带一行摘要、名字、路径和闲置时长。
+- **可移动 / 滚动 / 缩放 / 调大小** —— 拖手柄移动(可跨多显示器);在灯上拖动可横向滚动;拖边缘调大小;缩放在设置里调。位置、大小、改名都跨重启记住。
+- **菜单栏托盘** —— 无 Dock 图标、无窗口边框;托盘标题显示聚合灯色 + 存活会话数。
+
+## 设置
+
+菜单栏图标(或在灯上右键)→ **设置…**:
+
+- **快捷键** —— 自定义 `⌘J`(智能跳转)和 `⌘⇧J`(全量跳转),录制按键即可。
+- **外观** —— 缩放、横 / 竖排、灯下是否显名。
+- **窗口** —— 重置位置(回到当前屏右下角)、恢复默认大小。
+- **通用** —— 开机自启(登录系统时自动启动 CliPeek)。
+
+## 环境要求
 
 - macOS
-- [Node.js](https://nodejs.org/) (to run from source)
+- [Node.js](https://nodejs.org/)(从源码运行)
 - [Claude Code](https://claude.com/claude-code)
-- [Warp](https://www.warp.dev/) — for click‑to‑focus a terminal tab (needs Warp ≥ `2026.05.27`). Other terminals still show status fine, they just can't be focused yet.
+- [Warp](https://www.warp.dev/)——跳转终端标签页需要(需 Warp ≥ `2026.05.27`)。其它终端照样显示状态,只是暂时跳不过去。
 
-## Run from source
+## 从源码运行
 
 ```bash
 git clone https://github.com/Jirry/clipeek.git
 cd clipeek
 npm install
-npm start        # build + launch
-# npm run dev    # watch & rebuild during development
+npm start        # 构建 + 启动
+# npm run dev    # 开发时监听重建
 ```
 
-## Build a release
+## 打包发版
 
 ```bash
-npm run dist     # electron-builder → release/clipeek-<version>-arm64.dmg
+npm run dist     # electron-builder → release/CliPeek-<版本>-{arm64,x64}.{dmg,zip}
 ```
 
-The dmg is **unsigned** (no Apple Developer certificate) and **Apple‑Silicon (arm64) only**. On first launch macOS Gatekeeper will block it — right‑click the app → **Open**, or run `xattr -dr com.apple.quarantine /Applications/clipeek.app`.
+产出**未签名**(无 Apple 开发者证书)。macOS 对未签名应用首次打开会被 Gatekeeper 拦,在终端执行一次去掉隔离标记即可:
 
-## Note
+```sh
+xattr -dr com.apple.quarantine /Applications/CliPeek.app
+```
 
-On first launch clipeek installs a small, removable Claude Code hook (files under `~/.clipeek/`, registered in `~/.claude/settings.json`) so it can detect permission prompts / turn completion and open the right terminal tab. It only adds its own entry and never touches your other hooks — delete those entries to uninstall.
+## 说明
 
-## Status
+首次启动时,CliPeek 会装一个小巧、可随时删除的 Claude Code hook(文件在 `~/.clipeek/`,注册进 `~/.claude/settings.json`),用来探测权限弹窗、一轮的开始与结束(及时切换灯色)、以及打开对应终端标签页。它只加自己那几条,绝不动你的其它 hook——删掉即可卸载。
 
-- **Claude Code** — supported.
-- **Codex** — planned.
+## 进度
 
-## License
+- **Claude Code** —— 已支持。
+- **Codex** —— 计划中。
+
+## 许可
 
 [MIT](LICENSE) © Jirry

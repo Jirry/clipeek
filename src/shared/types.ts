@@ -51,8 +51,12 @@ export const STATE_PRIORITY: Record<SessionState, number> = {
 
 /** 持久化配置(写在 userData 下的 config.json)。 */
 export interface Config {
+  /** 上次窗口左上角(仅用于「上次在哪块屏」的定位;贴边落点由 dockRight/dockBottom + 当前宽高实时算)。 */
   x: number | null;
   y: number | null;
+  /** 横排状态条上次贴的角:右/左、下/上。状态条宽随会话数自适应,故贴边语义用「边」而非绝对坐标。 */
+  dockRight: boolean;
+  dockBottom: boolean;
   /** UI 缩放,1 = 默认大小,满足「大小可调」。 */
   scale: number;
   /** 用户拖边缘设定的窗口宽度;null = 自适应内容宽度。 */
@@ -69,15 +73,24 @@ export interface Config {
   showNames: boolean;
   /** 自定义重命名:sessionId -> 显示名。 */
   names: Record<string, string>;
+  /** 全局快捷键(Electron accelerator 字符串)。jump = 智能跳转,jumpAll = 全量循环。 */
+  shortcuts: { jump: string; jumpAll: string };
+  /** 登录系统时自动启动 CliPeek。 */
+  launchAtLogin: boolean;
 }
 
 /** UI 缩放安全范围 —— 单一来源:sanitize 的越界夹持(store.ts)与菜单放大/缩小的边界(main.ts)共用。 */
 export const SCALE_MIN = 0.6;
 export const SCALE_MAX = 2.0;
 
+/** 默认全局快捷键。 */
+export const DEFAULT_SHORTCUTS = { jump: 'Command+J', jumpAll: 'Command+Shift+J' };
+
 export const DEFAULT_CONFIG: Config = {
   x: null,
   y: null,
+  dockRight: true, // 默认贴右下角
+  dockBottom: true,
   scale: 1,
   width: null,
   height: null,
@@ -86,6 +99,8 @@ export const DEFAULT_CONFIG: Config = {
   layout: 'bar',
   showNames: true,
   names: {},
+  shortcuts: { ...DEFAULT_SHORTCUTS },
+  launchAtLogin: false,
 };
 
 /** Adapter 统一接口:轮询返回当前所有会话。ClaudeCodeAdapter / CodexAdapter / MockAdapter 都实现它。 */

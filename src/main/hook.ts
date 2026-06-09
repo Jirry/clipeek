@@ -10,6 +10,7 @@ const CLIPEEK_DIR = join(homedir(), '.clipeek');
 export const NOTIFY_DIR = join(CLIPEEK_DIR, 'notify');
 export const FOCUS_DIR = join(CLIPEEK_DIR, 'focus'); // <session_id> → 终端聚焦深链(Warp 的 WARP_FOCUS_URL)
 export const DONE_DIR = join(CLIPEEK_DIR, 'done'); // <session_id> → 本轮答完标记(Stop hook 落点,mtime=结束时刻)
+export const BUSY_DIR = join(CLIPEEK_DIR, 'busy'); // <session_id> → 用户已提交、本轮处理中(UserPromptSubmit 写、Stop 清);抗 Claude Code 写 jsonl 的整轮缓冲延迟
 const HOOK_PATH = join(CLIPEEK_DIR, 'hook.sh');
 const SETTINGS_PATH = join(homedir(), '.claude', 'settings.json');
 // 多事件挂钩:SessionStart/UserPromptSubmit 早早抓到聚焦 URL;Notification 抓「等待」通知;
@@ -25,16 +26,17 @@ const HOOK_SCRIPT = `#!/bin/sh
 payload=$(cat)
 sid=$(printf '%s' "$payload" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p')
 [ -z "$sid" ] && exit 0
-mkdir -p "$HOME/.clipeek/notify" "$HOME/.clipeek/focus" "$HOME/.clipeek/done"
+mkdir -p "$HOME/.clipeek/notify" "$HOME/.clipeek/focus" "$HOME/.clipeek/done" "$HOME/.clipeek/busy"
 # 终端聚焦深链(只在终端注入了 WARP_FOCUS_URL 时才有 → 双击灯跳回该 tab)
 [ -n "$WARP_FOCUS_URL" ] && printf '%s' "$WARP_FOCUS_URL" > "$HOME/.clipeek/focus/$sid"
 ntype=$(printf '%s' "$payload" | sed -n 's/.*"notification_type"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p')
 [ -n "$ntype" ] && printf '%s' "$ntype" > "$HOME/.clipeek/notify/$sid"
-# 本轮答完 / 新轮开始:Stop 写 done 标记(mtime=结束时刻),UserPromptSubmit 清掉(新轮开始)
+# 本轮答完 / 新轮开始:Stop 写 done 标记并清 busy;UserPromptSubmit 清 done 并写 busy 标记。
+# busy(mtime=提交时刻)比 jsonl 新 = 用户已提交但 Claude 写盘还没追上 → clipeek 据此判「执行中」,不显上一轮完成态。
 event=$(printf '%s' "$payload" | sed -n 's/.*"hook_event_name"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p')
 case "$event" in
-  Stop) printf 'done' > "$HOME/.clipeek/done/$sid" ;;
-  UserPromptSubmit) rm -f "$HOME/.clipeek/done/$sid" ;;
+  Stop) printf 'done' > "$HOME/.clipeek/done/$sid"; rm -f "$HOME/.clipeek/busy/$sid" ;;
+  UserPromptSubmit) rm -f "$HOME/.clipeek/done/$sid"; printf 'busy' > "$HOME/.clipeek/busy/$sid" ;;
 esac
 exit 0
 `;
@@ -95,9 +97,11 @@ export function installHook(): void {
     mkdirSync(NOTIFY_DIR, { recursive: true });
     mkdirSync(FOCUS_DIR, { recursive: true });
     mkdirSync(DONE_DIR, { recursive: true });
+    mkdirSync(BUSY_DIR, { recursive: true });
     reap(NOTIFY_DIR, 24 * 60 * 60 * 1000); // 通知文件 24h 过期
     reap(FOCUS_DIR, 7 * 24 * 60 * 60 * 1000); // 聚焦文件 7d 过期(可能隔几天还想点回去)
     reap(DONE_DIR, 24 * 60 * 60 * 1000); // done 标记 24h 过期
+    reap(BUSY_DIR, 24 * 60 * 60 * 1000); // busy 标记 24h 过期(正常会被 Stop 清,残留兜底)
     let needWrite = true;
     try {
       needWrite = readFileSync(HOOK_PATH, 'utf8') !== HOOK_SCRIPT;

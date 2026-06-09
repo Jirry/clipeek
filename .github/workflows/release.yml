@@ -64,8 +64,25 @@ jobs:
             release/*.zip
           fail_on_unmatched_files: true
           body: |
-            macOS · 未签名 · Apple Silicon (arm64) + Intel (x64) · dmg + zip
+            ### 📦 下载
 
-            **安装**(未签名,首次需放行一次):右键点 **clipeek.app → 打开 → 打开**,或终端执行 `xattr -dr com.apple.quarantine /Applications/clipeek.app`。
+            | 你的 Mac | 安装包 (dmg) | 免安装 (zip) |
+            | --- | --- | --- |
+            | Apple 芯片(M1/M2/M3…) | `CliPeek-*-arm64.dmg` | `CliPeek-*-arm64.zip` |
+            | Intel | `CliPeek-*-x64.dmg` | `CliPeek-*-x64.zip` |
 
-            需要 [Claude Code](https://claude.com/claude-code);单击灯跳转终端标签页需 [Warp](https://www.warp.dev/) ≥ `2026.05.27`。
+            👇 从下方 **Assets** 里下载对应文件(`dmg` = 安装包,`zip` = 免安装)。
+
+            ### ⚠️ macOS 首次启动
+
+            应用未做 Apple 签名,首次打开会被 Gatekeeper 拦。装好后在终端执行一次:
+
+            ```sh
+            xattr -dr com.apple.quarantine /Applications/CliPeek.app
+            ```
+
+            之后正常双击即可打开。
+
+            ### 🔄 关于
+
+            **CliPeek**(瞄一眼)—— 常驻角落的悬浮 HUD,把本地 AI CLI(Claude Code)会话显示成红绿灯;点灯跳到对应终端,`⌘J` 智能跳到最需要关注的会话、`⌘⇧J` 全量循环(均可在设置里改键)。需 [Claude Code](https://claude.com/claude-code);跳转终端需 [Warp](https://www.warp.dev/) ≥ `2026.05.27`。
