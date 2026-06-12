@@ -1,4 +1,4 @@
-import type { Config } from '../shared/types';
+import type { Config, SavedPosition } from '../shared/types';
 import { DEFAULT_CONFIG, SCALE_MIN, SCALE_MAX } from '../shared/types';
 import type { ClipeekApi } from '../main/preload';
 
@@ -137,10 +137,29 @@ function stepper(): HTMLElement {
   wrap.append(minus, val, plus);
   return wrap;
 }
-function resetBtn(label: string, action: string): HTMLElement {
-  const b = el('button', 'btn', label);
-  b.onclick = () => api.settingsAction(action);
-  return b;
+// —— 位置预设 / 自定义快照 ——
+function posDesc(p: SavedPosition): string {
+  return `${p.layout === 'bar' ? '横排' : '竖排'} · ${p.showNames ? '灯下显名' : '不显名'} · 缩放 ${Math.round(p.scale * 100)}%`;
+}
+function startRename(nameEl: HTMLElement, current: string, onRename: (v: string) => void): void {
+  const input = el('input', 'pos-rename');
+  input.type = 'text';
+  input.value = current;
+  let done = false;
+  const commit = (save: boolean) => {
+    if (done) return;
+    done = true;
+    if (save && input.value.trim()) onRename(input.value.trim()); // 回推 → onConfig → 重渲染
+    else renderPanel(); // 取消 → 直接恢复
+  };
+  input.onkeydown = (e) => {
+    if (e.key === 'Enter') commit(true);
+    else if (e.key === 'Escape') commit(false);
+  };
+  input.onblur = () => commit(true);
+  nameEl.replaceWith(input);
+  input.focus();
+  input.select();
 }
 function keys(which: 'jump' | 'jumpAll'): HTMLElement {
   if (recording === which) {
@@ -178,11 +197,52 @@ function panelAppearance(): HTMLElement[] {
     field('灯下显示名字', checkbox(cfg.showNames, (v) => api.settingsSet({ showNames: v })), '横排模式生效'),
   ];
 }
+// 一个「按钮 + 下方说明」单元:按钮名 = 位置名,下方 = 该位置参数说明。自定义项:右键重命名、✕ 删。
+function btnUnit(label: string, desc: string, onApply: () => void, onRename?: (v: string) => void, onDelete?: () => void): HTMLElement {
+  const unit = el('div', 'pos-unit');
+  const top = el('div', 'pos-unit-top');
+  const b = el('button', 'btn', label);
+  b.onclick = onApply;
+  if (onRename) {
+    b.title = '点击应用 · 右键重命名';
+    b.oncontextmenu = (e) => {
+      e.preventDefault();
+      startRename(b, label, onRename);
+    };
+  }
+  top.appendChild(b);
+  if (onDelete) {
+    const del = el('button', 'btn-icon', '✕');
+    del.title = '删除';
+    del.onclick = onDelete;
+    top.appendChild(del);
+  }
+  unit.appendChild(top);
+  unit.appendChild(el('div', 'pos-unit-desc', desc));
+  return unit;
+}
 function panelWindow(): HTMLElement[] {
-  return [
-    field('位置', resetBtn('重置', 'resetPosition'), '移回当前屏右下角'),
-    field('大小', resetBtn('恢复默认', 'resetSize'), '宽高与缩放恢复默认'),
-  ];
+  // 预设位置:右下/左下/顶部 三个按钮单元
+  const presetCtl = el('div', 'pos-units');
+  (
+    [
+      ['br', '右下角', '横排 · 灯下显名 · 宽随灯数(≤6) · Dock 高'],
+      ['bl', '左下角', '横排 · 灯下显名 · 宽随灯数(≤6) · Dock 高'],
+      ['tc', '顶部中间', '横排 · 不显名 · 宽随灯数(≤6) · 菜单栏高'],
+    ] as const
+  ).forEach(([k, label, desc]) => presetCtl.appendChild(btnUnit(label, desc, () => api.presetPosition(k))));
+  // 自定义位置:每个快照一个按钮单元 + ＋记录
+  const customCtl = el('div', 'pos-units');
+  cfg.positions.forEach((pos, i) =>
+    customCtl.appendChild(btnUnit(pos.name, posDesc(pos), () => api.applyPosition(i), (v) => api.renamePosition(i, v), () => api.deletePosition(i))),
+  );
+  if (cfg.positions.length < 3) {
+    const add = el('button', 'btn', '＋ 记录');
+    add.title = '把当前位置/大小/模式记成一个快照';
+    add.onclick = () => api.savePosition();
+    customCtl.appendChild(add);
+  }
+  return [field('预设位置', presetCtl), field('自定义位置', customCtl)];
 }
 function panelGeneral(): HTMLElement[] {
   return [field('开机自启', checkbox(cfg.launchAtLogin, (v) => api.settingsSet({ launchAtLogin: v })), '登录系统时自动启动 CliPeek')];

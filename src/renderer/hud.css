@@ -40,7 +40,8 @@ body {
 
 #app {
   display: inline-block;
-  /* margin 由 hud.ts 按窗口/停靠方向动态设置(给阴影留边距) */
+  vertical-align: top; /* 消除 inline-block 基线对齐在上/下方留出的几像素行盒空隙(否则窗口比玻璃面高 2-3px,截图识别窗口会多框进去) */
+  /* margin 由 hud.ts 按窗口/停靠方向动态设置 */
 }
 
 /* 横排窗的 .hud 是透明容器:上方预留悬停槽 + 下方状态条;竖排窗的 .hud 直接是玻璃面 */
@@ -243,26 +244,26 @@ body {
 }
 .light.needsInput {
   background: var(--amber);
-  box-shadow: 0 0 calc(7px * var(--scale)) var(--amber);
-  animation: blink 1.2s ease-in-out infinite;
+  box-shadow: 0 0 calc(5px * var(--scale)) var(--amber);
+  animation: blink 0.8s ease-in-out infinite; /* 黄闪=需介入,更紧急 → 比绿闪快 */
   will-change: transform, opacity;
 }
 /* 绿闪·该你了:和黄闪同样抢眼,只是绿色 */
 .light.attention {
   background: var(--green);
-  box-shadow: 0 0 calc(7px * var(--scale)) var(--green);
+  box-shadow: 0 0 calc(5px * var(--scale)) var(--green);
   animation: blink 1.2s ease-in-out infinite;
   will-change: transform, opacity;
 }
 @keyframes blink {
   0%,
   100% {
-    transform: scale(1.15);
+    transform: scale(1); /* 不放大(放大会被 overflow:hidden 上下裁掉,高度小时尤其明显) */
     opacity: 1;
   }
   50% {
-    transform: scale(0.82);
-    opacity: 0.5;
+    transform: scale(0.78); /* 只缩小脉冲 + 变淡;醒目靠 opacity + 缩放,不外扩 */
+    opacity: 0.4;
   }
 }
 /* ⌘⇧J 触发的灯:白色内环 + 灯「缩放脉冲两下」+ 一下变亮,标出「跳到了这个」;

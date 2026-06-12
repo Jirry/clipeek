@@ -97,8 +97,20 @@ const api = {
   settingsSet(partial: Partial<Config>): void {
     ipcRenderer.send('settings:set', partial);
   },
-  settingsAction(name: string): void {
-    ipcRenderer.send('settings:action', name);
+  presetPosition(kind: 'br' | 'bl' | 'tc'): void {
+    ipcRenderer.send('settings:preset', kind);
+  },
+  savePosition(): void {
+    ipcRenderer.send('settings:savePos');
+  },
+  applyPosition(index: number): void {
+    ipcRenderer.send('settings:applyPos', index);
+  },
+  renamePosition(index: number, name: string): void {
+    ipcRenderer.send('settings:renamePos', index, name);
+  },
+  deletePosition(index: number): void {
+    ipcRenderer.send('settings:delPos', index);
   },
   settingsResize(height: number): void {
     ipcRenderer.send('settings:resize', height);

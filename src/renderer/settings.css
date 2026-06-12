@@ -335,3 +335,56 @@ kbd {
 .hint.warn {
   color: var(--warn);
 }
+
+/* 位置:两个 field(预设/自定义),控件区是竖排的「按钮 + 说明」单元 */
+.field-main:has(.pos-units) {
+  align-items: flex-start; /* 控件多行 → 标签顶对齐第一个按钮 */
+}
+.field-main:has(.pos-units) .field-label {
+  padding-top: 4px;
+}
+.pos-units {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}
+.pos-unit-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pos-unit-desc {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--dim);
+  line-height: 1.4;
+}
+.btn-icon {
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--dim);
+  font-size: 12px;
+  cursor: pointer;
+}
+.btn-icon:hover {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+.pos-rename {
+  width: 120px;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 13px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+}
+.btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}

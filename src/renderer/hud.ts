@@ -40,6 +40,7 @@ const ROLE: 'bar' | 'list' | 'tip' = roleParam === 'list' ? 'list' : roleParam =
 const MARGIN = 0; // 无边距:玻璃面完全贴紧屏幕边缘
 const VMARGIN = MARGIN;
 const MAX_DOTS = 6;
+const MENUBAR_H = 24; // mac 标准菜单栏高 —— 状态条允许缩到这么矮(此时灯随高度同步缩小)
 
 const STATE_COLOR: Record<SessionState, string> = {
   done: 'var(--green)',
@@ -65,6 +66,8 @@ let config: Config = {
   names: {},
   shortcuts: { jump: 'Command+J', jumpAll: 'Command+Shift+J' },
   launchAtLogin: false,
+  topCenter: false,
+  positions: [],
 };
 let dock = { bottom: true, right: true, dockH: 56, home: '' };
 let editingId: string | null = null;
@@ -285,7 +288,7 @@ function renderBar(): void {
   lastBarSig = sig;
   // 注意:不在这里读 .bar-scroll.scrollLeft —— 连续重渲染时会读到刚建好(scrollLeft=0)的新元素而丢位置。
   // savedScrollLeft 由 .bar-scroll 的 scroll 事件实时维护(见下),这里只在 fitBar 里恢复。
-  document.documentElement.style.setProperty('--scale', String(config.scale));
+  document.documentElement.style.setProperty('--scale', String(effScale())); // 灯随状态条高度自适应缩放
   const p = barPad();
   app.style.margin = `${p.top}px ${p.right}px ${p.bottom}px ${p.left}px`;
 
@@ -304,8 +307,8 @@ function renderBar(): void {
   // 离开整条状态条 → 收提示框(灯与灯之间靠 mouseenter 接力,不会闪)
   bar.addEventListener('mouseleave', () => window.clipeek.tipLeave());
 
-  // 左侧拖动手柄(8 点):固定在最左,不随灯滚动;只有按住这里才拖整个窗口
-  bar.appendChild(makeGrip(8));
+  // 左侧拖动手柄(6 点):固定在最左,不随灯滚动;只有按住这里才拖整个窗口
+  bar.appendChild(makeGrip(6));
 
   // 滚动区:只包含灯。拖动 = 横向滚动;原地点灯 = 浮出/收起列表。手柄不在其中 → 滚动时手柄不动。
   const scroll = el('div', 'bar-scroll');
@@ -388,11 +391,19 @@ function naturalHeight(): number {
 }
 // 状态条高度:用户拖过顶边 → config.height;否则默认 = Dock 高 × 缩放;但都不低于内容自然高度。
 function barHeight(): number {
-  const def = config.height != null ? config.height : (dock.dockH - 2 * VMARGIN) * (config.scale || 1);
-  return Math.max(def, naturalHeight());
+  // 用户拉过高度 → 用它(可低于自然高,灯会随之缩小);否则默认 = Dock 高 × 缩放,且不低于自然高(灯不缩,保持现有外观)
+  if (config.height != null) return config.height;
+  return Math.max((dock.dockH - 2 * VMARGIN) * (config.scale || 1), naturalHeight());
+}
+// 灯的实际缩放:高度装不下「灯+名字」时按比例把灯缩小 → 用户可把状态条拉到菜单栏那么矮、灯同步缩。
+// 默认高度下 barHeight ≥ naturalHeight,effScale === config.scale(外观不变)。
+function effScale(h = barHeight()): number {
+  const s = config.scale || 1;
+  const natH = naturalHeight();
+  return h < natH ? Math.max(0.3, (s * h) / natH) : s;
 }
 function naturalWidth(p: { left: number; right: number }): number {
-  const s = config.scale || 1;
+  const s = effScale();
   const n = Math.min(Math.max(sessions.length, 4), MAX_DOTS);
   const cell = 60 * s;
   const gap = 13 * s;
@@ -413,7 +424,7 @@ function fitBar(): void {
     const bar = app.querySelector('.bar-surface') as HTMLElement | null;
     const minW = naturalWidth(p); // 默认宽 = 灯数夹到 [4,6] 的宽度
     window.clipeek.setMinWidth(minW);
-    window.clipeek.setMinHeight(naturalHeight()); // 拉伸高度的下限 = 内容自然高度(保证灯+名字不被截)
+    window.clipeek.setMinHeight(MENUBAR_H); // 拉伸高度下限 = 菜单栏高;再矮装不下灯+名字时,灯随高度缩小(effScale)
     const winW = config.width != null ? Math.max(config.width, minW) : minW;
     if (bar) bar.style.width = `${winW - p.left - p.right}px`;
     const scroll = app.querySelector('.bar-scroll') as HTMLElement | null;
@@ -589,8 +600,10 @@ async function init() {
       const bar = document.querySelector('.bar-surface') as HTMLElement | null;
       if (bar) {
         const p = barPad();
+        const innerH = Math.max(0, h - p.top - p.bottom);
+        document.documentElement.style.setProperty('--scale', String(effScale(innerH))); // 拉伸中实时随高度缩灯(跟手,不等松手)
         bar.style.width = `${Math.max(0, w - p.left - p.right)}px`;
-        bar.style.minHeight = `${Math.max(0, h - p.top - p.bottom)}px`; // 调高时同步玻璃面高度
+        bar.style.minHeight = `${innerH}px`;
       }
     });
   } else if (ROLE === 'list') {

@@ -1,7 +1,7 @@
 import { app } from 'electron';
 import { readFileSync, writeFileSync, renameSync, unlinkSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { Config, DEFAULT_CONFIG, DEFAULT_SHORTCUTS, SCALE_MIN, SCALE_MAX } from '../shared/types';
+import { Config, DEFAULT_CONFIG, DEFAULT_SHORTCUTS, SCALE_MIN, SCALE_MAX, SavedPosition } from '../shared/types';
 
 // 极简 JSON 持久化:窗口位置、缩放、名字显隐、自定义会话名。
 // 写在 Electron userData 目录,跨启动保留(满足「记住位置」「重命名」)。
@@ -10,6 +10,33 @@ const configPath = () => join(app.getPath('userData'), 'config.json');
 
 const finiteOrNull = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 const posOrNull = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null);
+
+/** 校验自定义位置快照数组(防手改/损坏);最多保留 3 个。 */
+function sanitizePositions(raw: unknown): SavedPosition[] {
+  if (!Array.isArray(raw)) return [];
+  const out: SavedPosition[] = [];
+  for (const item of raw) {
+    if (out.length >= 3) break;
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const o = item as Record<string, unknown>;
+    out.push({
+      name: typeof o.name === 'string' && o.name.trim() ? o.name : '未命名',
+      layout: o.layout === 'list' ? 'list' : 'bar',
+      scale: typeof o.scale === 'number' && Number.isFinite(o.scale) ? Math.min(SCALE_MAX, Math.max(SCALE_MIN, o.scale)) : 1,
+      showNames: typeof o.showNames === 'boolean' ? o.showNames : true,
+      x: finiteOrNull(o.x),
+      y: finiteOrNull(o.y),
+      width: posOrNull(o.width),
+      height: posOrNull(o.height),
+      listWidth: posOrNull(o.listWidth),
+      listHeight: posOrNull(o.listHeight),
+      dockRight: typeof o.dockRight === 'boolean' ? o.dockRight : true,
+      dockBottom: typeof o.dockBottom === 'boolean' ? o.dockBottom : true,
+      topCenter: typeof o.topCenter === 'boolean' ? o.topCenter : false,
+    });
+  }
+  return out;
+}
 
 /** 把任意 JSON 强制成合法 Config —— 防止手改/损坏的字段(如 names 非对象、scale 越界)让 poll 每秒崩。 */
 function sanitize(raw: unknown): Config {
@@ -44,6 +71,8 @@ function sanitize(raw: unknown): Config {
     names,
     shortcuts,
     launchAtLogin: typeof o.launchAtLogin === 'boolean' ? o.launchAtLogin : DEFAULT_CONFIG.launchAtLogin,
+    topCenter: typeof o.topCenter === 'boolean' ? o.topCenter : DEFAULT_CONFIG.topCenter,
+    positions: sanitizePositions(o.positions),
   };
 }
 

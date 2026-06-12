@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { Adapter, Config, Session, SessionState, STATE_PRIORITY, SCALE_MIN, SCALE_MAX } from '../shared/types';
+import { Adapter, Config, Session, SessionState, STATE_PRIORITY, SCALE_MIN, SCALE_MAX, SavedPosition } from '../shared/types';
 import { loadConfig, saveConfig } from './store';
 import { ClaudeCodeAdapter } from './adapters/claude';
 import { installHook, FOCUS_DIR } from './hook';
@@ -131,10 +131,11 @@ function defaultPos(w: number, h: number, display?: Electron.Display) {
 // 用上次左上角定位「在哪块屏」;getDisplayNearestPoint 在那块屏被拔掉时自动回退到最近的屏。
 function restoredBarPos(w: number, h: number) {
   const ref = config.x != null && config.y != null ? { x: config.x, y: config.y } : null;
-  const b = (ref ? screen.getDisplayNearestPoint(ref) : screen.getPrimaryDisplay()).bounds;
+  const disp = ref ? screen.getDisplayNearestPoint(ref) : screen.getPrimaryDisplay();
+  const b = disp.bounds;
   return {
     x: config.dockRight ? b.x + b.width - w : b.x,
-    y: config.dockBottom ? b.y + b.height - h : b.y,
+    y: config.dockBottom ? b.y + b.height - h : disp.workArea.y, // 贴顶 → 菜单栏下沿,不钻进菜单栏区
   };
 }
 
@@ -154,6 +155,7 @@ function makeWin(role: 'bar' | 'list' | 'tip', show: boolean): BrowserWindow {
     resizable: false,
     movable: false,
     focusable: true,
+    acceptFirstMouse: true, // 状态条是后台 HUD(非激活窗口):不加这个,右键/点击会被 macOS 当「激活点击」吞掉或透传到下层 app
     enableLargerThanScreen: true,
     alwaysOnTop: true,
     skipTaskbar: true,
@@ -169,7 +171,10 @@ function makeWin(role: 'bar' | 'list' | 'tip', show: boolean): BrowserWindow {
       backgroundThrottling: false,
     },
   });
-  w.setAlwaysOnTop(true, 'screen-saver');
+  // 不用 'screen-saver':它层级 ≥ 系统截图工具的覆盖层,会把截图框选界面压在下面、挡得没法操作。
+  // 'floating' 仍浮在普通 app 之上(够 HUD 用),但低于截图层 → 截图时不再挡;代价:全屏 app 里看不到。
+  // 不加 setContentProtection:那会让状态条不被截图/录屏拍到,用户想正常截到它。
+  w.setAlwaysOnTop(true, 'floating');
   w.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   w.loadFile(join(__dirname, 'renderer', 'index.html'), { query: { role } });
   w.on('blur', () => {
@@ -345,13 +350,31 @@ function positionTip(_w: number, h: number) {
   if (!tipWin.isVisible()) tipWin.showInactive();
 }
 
+// 自定义快照恢复时的一次性目标坐标:等 hud 渲染回真实宽高后,由 fitWindow 精确落位(只用一次)
+let restorePos: { x: number; y: number } | null = null;
 // —— 窗口自适应贴合(作用于来源窗口,锚定屏幕角)——
 function fitWindow(win: BrowserWindow, w: number, h: number) {
   const b = win.getBounds();
   const newW = Math.max(1, Math.ceil(w));
   const newH = Math.max(1, Math.ceil(h));
   if ((win === resizeWin && resizeAnchor) || (win === dragWin && dragAnchor)) return; // 手动拉伸/拖动时不抢
-  const area = screen.getDisplayMatching(b).bounds;
+  const disp = screen.getDisplayMatching(b);
+  const area = disp.bounds;
+  // 自定义快照恢复:渲染后用真实宽高 + 记录坐标一次性精确落位(否则 repositionBar 用旧宽高,首次会偏、需点两次)
+  if (win === barWin && restorePos) {
+    const rx = Math.min(Math.max(restorePos.x, area.x), area.x + area.width - newW);
+    const ry = Math.min(Math.max(restorePos.y, disp.workArea.y), area.y + area.height - newH);
+    restorePos = null;
+    win.setBounds({ x: Math.round(rx), y: Math.round(ry), width: newW, height: newH });
+    return;
+  }
+  // 顶部居中预设:整屏水平居中 + 贴菜单栏下沿(优先于下面的贴角锚定)
+  if (config.topCenter && win === barWin) {
+    const nx = Math.round(area.x + (area.width - newW) / 2);
+    const ny = disp.workArea.y;
+    if (nx !== b.x || ny !== b.y || newW !== b.width || newH !== b.height) win.setBounds({ x: nx, y: ny, width: newW, height: newH });
+    return;
+  }
   // 只重锚「尺寸变了的那一维」:宽没变就别动 x(否则中线两侧来回切锚点会跳一两 px)
   const anchorRight = b.x + b.width / 2 > area.x + area.width / 2;
   const anchorBottom = b.y + b.height / 2 > area.y + area.height / 2;
@@ -386,12 +409,15 @@ function dragTick() {
   if (!dragWin || !dragAnchor) return;
   const c = screen.getCursorScreenPoint();
   const b = dragWin.getBounds();
-  const area = screen.getDisplayNearestPoint(c).bounds; // 夹在「光标所在那块屏」内 → 可跨屏(光标过去窗口跟过去),又进不了副屏外的空隙
+  const disp = screen.getDisplayNearestPoint(c); // 夹在「光标所在那块屏」内 → 可跨屏(光标过去窗口跟过去),又进不了副屏外的空隙
+  const area = disp.bounds;
+  const topY = disp.workArea.y; // 上边界 = 菜单栏下沿:状态条紧贴菜单栏下方,不钻进系统菜单栏区
+  const botY = area.y + area.height - b.height; // 下边界 = 屏幕底(仍可压住 Dock)
   // 窗口比屏还宽/高时上下界反转 → 用 min/max 兜底,否则被钉在边上拖不动
   const loX = Math.min(area.x, area.x + area.width - b.width);
   const hiX = Math.max(area.x, area.x + area.width - b.width);
-  const loY = Math.min(area.y, area.y + area.height - b.height);
-  const hiY = Math.max(area.y, area.y + area.height - b.height);
+  const loY = Math.min(topY, botY);
+  const hiY = Math.max(topY, botY);
   const x = Math.min(Math.max(dragAnchor.x + (c.x - dragAnchor.cx), loX), hiX);
   const y = Math.min(Math.max(dragAnchor.y + (c.y - dragAnchor.cy), loY), hiY);
   if (Math.round(x) !== b.x || Math.round(y) !== b.y) {
@@ -508,6 +534,7 @@ function saveBarPos() {
   const b = barWin.getBounds();
   config.x = b.x;
   config.y = b.y;
+  config.topCenter = false; // 用户一拖动就退出「顶部居中预设」,回到自由贴角
   recordBarDock(b); // 同时记住贴的是哪个角(启动按角贴边)
   saveConfig(config);
 }
@@ -547,11 +574,6 @@ function buildMenu(): Menu {
     { label: '设置…', click: () => openSettings() },
     { label: '退出 CliPeek', click: () => app.quit() }, // 不用 role:'quit'(macOS 会给它带图标 → 整列文字右移)
   ]);
-}
-function setScale(next: number) {
-  config.scale = Math.round(Math.min(SCALE_MAX, Math.max(SCALE_MIN, next)) * 100) / 100;
-  saveConfig(config);
-  pushConfig();
 }
 
 // —— 设置窗 ——
@@ -607,26 +629,116 @@ function applySettings(partial: Partial<Config>): void {
   if (layoutChanged) setLayout(config.layout); // 含 show/hide + save + push
   else pushConfig();
 }
-// 设置窗里的「动作型」按钮(非配置值):重置位置 / 恢复默认大小 —— 与托盘同名项一致。
-function settingsAction(name: string): void {
-  if (name === 'resetPosition') {
-    const a = activeWin();
-    if (!a) return;
-    const [w, h] = a.getSize();
-    const { x, y } = defaultPos(w, h, screen.getDisplayMatching(a.getBounds()));
-    a.setPosition(x, y);
-    if (a === barWin) saveBarPos();
-    pushDock();
-  } else if (name === 'resetSize') {
-    if (config.layout === 'list') {
-      config.listWidth = null;
-      config.listHeight = null;
-    } else {
-      config.width = null;
-      config.height = null;
-    }
-    setScale(1); // scale 复位 + save + push(顺带保存上面清空的尺寸)
+// —— 预设位置 + 自定义位置快照 ——
+function menubarHeight(d: Electron.Display): number {
+  return Math.max(0, d.workArea.y - d.bounds.y) || 24; // 菜单栏高 = 工作区顶 - 屏幕顶;拿不到兜底 24
+}
+// 把状态条按当前 dock/topCenter 重新摆位(用当前窗宽高粗放;渲染回来后 fitBar→fitWindow 再精确贴边/居中)。
+function repositionBar(): void {
+  if (!barWin) return;
+  const b = barWin.getBounds();
+  const d = screen.getDisplayMatching(b);
+  let x: number, y: number;
+  if (config.topCenter) {
+    x = d.bounds.x + (d.bounds.width - b.width) / 2; // 整屏水平居中
+    y = d.workArea.y; // 菜单栏下沿
+  } else if (config.x != null && config.y != null) {
+    // 自定义快照:回到记录的精确坐标(预设的 x/y 为 null,不走这支);夹到屏内、不钻菜单栏
+    x = Math.min(Math.max(config.x, d.bounds.x), d.bounds.x + d.bounds.width - b.width);
+    y = Math.min(Math.max(config.y, d.workArea.y), d.bounds.y + d.bounds.height - b.height);
+  } else {
+    x = config.dockRight ? d.bounds.x + d.bounds.width - b.width : d.bounds.x;
+    y = config.dockBottom ? d.bounds.y + d.bounds.height - b.height : d.workArea.y;
   }
+  barWin.setBounds({ x: Math.round(x), y: Math.round(y), width: b.width, height: b.height });
+}
+// 预设位置:右下 / 左下 / 顶部居中。都是横排;宽=自适应(默认 6 灯 / 实际灯数),
+// 高:右下/左下=Dock 高,顶部=菜单栏高。
+function applyPreset(kind: 'br' | 'bl' | 'tc'): void {
+  const wasList = config.layout === 'list';
+  config.layout = 'bar';
+  config.scale = 1; // 预设固定 100%,不沿用上一次自定义位置的缩放
+  config.width = null;
+  config.x = null;
+  config.y = null;
+  if (kind === 'tc') {
+    config.topCenter = true;
+    config.dockBottom = false;
+    config.dockRight = false;
+    config.showNames = false; // 顶部贴菜单栏,空间窄 → 不显灯下名
+    const d = barWin ? screen.getDisplayMatching(barWin.getBounds()) : screen.getPrimaryDisplay();
+    config.height = menubarHeight(d);
+  } else {
+    config.topCenter = false;
+    config.dockBottom = true;
+    config.dockRight = kind === 'br';
+    config.showNames = true; // 右下/左下 → 显灯下名
+    config.height = null; // 默认 Dock 高
+  }
+  saveConfig(config);
+  if (wasList) setLayout('bar');
+  else pushConfig();
+  repositionBar();
+}
+// 当前配置 → 一份快照
+function snapshotConfig(name: string): SavedPosition {
+  return {
+    name,
+    layout: config.layout,
+    scale: config.scale,
+    showNames: config.showNames,
+    x: config.x,
+    y: config.y,
+    width: config.width,
+    height: config.height,
+    listWidth: config.listWidth,
+    listHeight: config.listHeight,
+    dockRight: config.dockRight,
+    dockBottom: config.dockBottom,
+    topCenter: config.topCenter,
+  };
+}
+function savePosition(): void {
+  if (config.positions.length >= 3) return; // 最多 3 个
+  config.positions.push(snapshotConfig(`位置 ${config.positions.length + 1}`));
+  saveConfig(config);
+  pushConfig();
+}
+function applyPosition(index: number): void {
+  const p = config.positions[index];
+  if (!p) return;
+  const wasList = config.layout === 'list';
+  config.layout = p.layout;
+  config.scale = p.scale;
+  config.showNames = p.showNames;
+  config.x = p.x;
+  config.y = p.y;
+  config.width = p.width;
+  config.height = p.height;
+  config.listWidth = p.listWidth;
+  config.listHeight = p.listHeight;
+  config.dockRight = p.dockRight;
+  config.dockBottom = p.dockBottom;
+  config.topCenter = p.topCenter;
+  // 横排快照有精确坐标 → 交给 fitWindow 在渲染回真实宽高后一次性落位(repositionBar 仅做粗放,避免渲染前闪一下)
+  restorePos = config.layout === 'bar' && !p.topCenter && p.x != null && p.y != null ? { x: p.x, y: p.y } : null;
+  saveConfig(config);
+  if (wasList !== (config.layout === 'list')) setLayout(config.layout);
+  else pushConfig();
+  if (config.layout === 'bar') repositionBar();
+}
+function renamePosition(index: number, name: string): void {
+  const p = config.positions[index];
+  if (!p) return;
+  p.name = name.trim() || p.name;
+  saveConfig(config);
+  pushConfig();
+}
+function deletePosition(index: number): void {
+  if (index < 0 || index >= config.positions.length) return;
+  config.positions.splice(index, 1);
+  saveConfig(config);
+  pushConfig();
 }
 
 function setupTray() {
@@ -699,7 +811,11 @@ function setupIpc() {
   ipcMain.handle('hud:getConfig', () => config);
   ipcMain.on('settings:open', () => openSettings());
   ipcMain.on('settings:set', (_e, partial: Partial<Config>) => applySettings(partial));
-  ipcMain.on('settings:action', (_e, name: string) => settingsAction(name));
+  ipcMain.on('settings:preset', (_e, kind: 'br' | 'bl' | 'tc') => applyPreset(kind));
+  ipcMain.on('settings:savePos', () => savePosition());
+  ipcMain.on('settings:applyPos', (_e, index: number) => applyPosition(index));
+  ipcMain.on('settings:renamePos', (_e, index: number, name: string) => renamePosition(index, name));
+  ipcMain.on('settings:delPos', (_e, index: number) => deletePosition(index));
   ipcMain.on('settings:resize', (_e, h: number) => {
     if (!settingsWin || settingsWin.isDestroyed()) return;
     const [w, curH] = settingsWin.getContentSize();

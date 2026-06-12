@@ -49,6 +49,23 @@ export const STATE_PRIORITY: Record<SessionState, number> = {
   exited: 5,
 };
 
+/** 一份位置快照:记录「一键还原」所需的全部位置/大小/模式字段(预设也复用它的应用逻辑)。 */
+export interface SavedPosition {
+  name: string;
+  layout: 'bar' | 'list';
+  scale: number;
+  showNames: boolean;
+  x: number | null;
+  y: number | null;
+  width: number | null;
+  height: number | null;
+  listWidth: number | null;
+  listHeight: number | null;
+  dockRight: boolean;
+  dockBottom: boolean;
+  topCenter: boolean;
+}
+
 /** 持久化配置(写在 userData 下的 config.json)。 */
 export interface Config {
   /** 上次窗口左上角(仅用于「上次在哪块屏」的定位;贴边落点由 dockRight/dockBottom + 当前宽高实时算)。 */
@@ -77,6 +94,10 @@ export interface Config {
   shortcuts: { jump: string; jumpAll: string };
   /** 登录系统时自动启动 CliPeek。 */
   launchAtLogin: boolean;
+  /** 顶部居中预设:贴菜单栏下沿、整屏水平居中。用户一拖动就取消(回到 dockRight/dockBottom 贴角)。 */
+  topCenter: boolean;
+  /** 自定义位置快照(用户记录的位置/大小/模式,一键还原),最多 3 个。 */
+  positions: SavedPosition[];
 }
 
 /** UI 缩放安全范围 —— 单一来源:sanitize 的越界夹持(store.ts)与菜单放大/缩小的边界(main.ts)共用。 */
@@ -101,6 +122,8 @@ export const DEFAULT_CONFIG: Config = {
   names: {},
   shortcuts: { ...DEFAULT_SHORTCUTS },
   launchAtLogin: false,
+  topCenter: false,
+  positions: [],
 };
 
 /** Adapter 统一接口:轮询返回当前所有会话。ClaudeCodeAdapter / CodexAdapter / MockAdapter 都实现它。 */

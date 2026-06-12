@@ -44,7 +44,8 @@ Both shortcuts **focus the target session's terminal** and **flash that light (w
 - **Two layouts**, switchable in one click:
   - **Bar** — a horizontal strip of dots, parked along your Dock.
   - **List** — a vertical panel in a screen corner, with a one‑line summary, names, paths and idle time.
-- **Move / scroll / resize / zoom** — drag the handle to move (across multiple displays); drag the dots to scroll; drag the edges to resize; set zoom in Settings. Position, size and renames are remembered across restarts.
+- **Move / scroll / resize / zoom** — drag the handle to move (across multiple displays, or up next to the menu bar at the top of the screen); drag the dots to scroll; drag the edges to resize (squeeze it down to menu‑bar height and the dots shrink with it); set zoom in Settings. Position, size and renames are remembered across restarts.
+- **Position presets / snapshots** — three one‑click presets (bottom‑right, bottom‑left, top against the menu bar); or save the current position / size / zoom / layout as a named snapshot (up to 3) and restore it anytime.
 - **Menu‑bar tray** — no Dock icon, no window chrome; the tray title shows an aggregate light + the number of live sessions.
 
 ## Settings
@@ -53,7 +54,7 @@ Menu‑bar icon (or right‑click a dot) → **Settings…**:
 
 - **Shortcuts** — customize `⌘J` (smart jump) and `⌘⇧J` (cycle all); just record the keys.
 - **Appearance** — zoom, bar / list layout, whether to show names under the dots.
-- **Window** — reset position (back to the bottom‑right of the current screen), restore default size.
+- **Window** — **presets** (bottom‑right / bottom‑left / top against the menu bar) for one‑click placement; **custom positions** save the current position, size, zoom and layout as a snapshot (up to 3, renamable) to restore in one click.
 - **General** — launch at login (start CliPeek automatically when you log in).
 
 ## Requirements
