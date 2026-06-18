@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdtempSync, writeFileSync, statSync, utimesSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, statSync, utimesSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import {
   classify,
   deriveState,
@@ -11,6 +11,7 @@ import {
   readNotify,
   readDone,
   readBusy,
+  backgroundWorkRunning,
   encodeDirs,
   projectName,
   resolveLiveSessions,
@@ -155,6 +156,99 @@ describe('scanTail / parseRaw(真实文件尾部)', () => {
   });
   it('parseRaw 找不到 cwd → null', () => {
     expect(parseRaw(fixture([JSON.stringify({ type: 'assistant', message: { stop_reason: 'end_turn', content: [{ type: 'text' }] } })]))).toBeNull();
+  });
+});
+
+describe('pendingWorkflow(尾部 turn_duration 报告的后台 workflow 数)', () => {
+  it('尾部 turn_duration 带 pendingWorkflowCount>0 → 取到该值,且仍正确解析完成态', () => {
+    const r = parseRaw(
+      fixture([
+        JSON.stringify({ type: 'assistant', cwd: '/x', message: { stop_reason: 'end_turn', content: [{ type: 'text' }] } }),
+        JSON.stringify({ type: 'system', subtype: 'stop_hook_summary', cwd: '/x' }),
+        JSON.stringify({ type: 'system', subtype: 'turn_duration', cwd: '/x', pendingWorkflowCount: 2 }),
+      ]),
+    )!;
+    expect(r.pendingWorkflow).toBe(2);
+    expect(r.kind).toEqual({ k: 'text', endTurn: true });
+  });
+  it('turn_duration 无 pendingWorkflowCount 字段(无 workflow)→ 0', () => {
+    const r = parseRaw(
+      fixture([
+        JSON.stringify({ type: 'assistant', cwd: '/x', message: { stop_reason: 'end_turn', content: [{ type: 'text' }] } }),
+        JSON.stringify({ type: 'system', subtype: 'turn_duration', cwd: '/x', durationMs: 1234 }),
+      ]),
+    )!;
+    expect(r.pendingWorkflow).toBe(0);
+  });
+  it('没有 turn_duration 行 → 0', () => {
+    const r = parseRaw(fixture([JSON.stringify({ type: 'assistant', cwd: '/x', message: { stop_reason: 'end_turn', content: [{ type: 'text' }] } })]))!;
+    expect(r.pendingWorkflow).toBe(0);
+  });
+  it('只取尾部最新(第一个遇到的)turn_duration,忽略更旧的', () => {
+    const r = parseRaw(
+      fixture([
+        JSON.stringify({ type: 'system', subtype: 'turn_duration', cwd: '/x', pendingWorkflowCount: 5 }), // 旧
+        JSON.stringify({ type: 'assistant', cwd: '/x', message: { stop_reason: 'end_turn', content: [{ type: 'text' }] } }),
+        JSON.stringify({ type: 'system', subtype: 'turn_duration', cwd: '/x', pendingWorkflowCount: 1 }), // 新(最尾)
+      ]),
+    )!;
+    expect(r.pendingWorkflow).toBe(1);
+  });
+});
+
+describe('backgroundWorkRunning(子 agent transcript 结构 + 活性窗口)', () => {
+  const baseSec = 1_700_000_000;
+  const nowMs = baseSec * 1000;
+  const DONE_LINE = JSON.stringify({ type: 'assistant', cwd: '/x', message: { stop_reason: 'end_turn', content: [{ type: 'text' }] } }); // 子 agent 已答完
+  const RUNNING_LINE = JSON.stringify({ type: 'assistant', cwd: '/x', message: { stop_reason: 'tool_use', content: [{ type: 'tool_use', name: 'Bash' }] } }); // 未答完(工具在跑)
+  // 在 TMP/<base>/subagents/<rel> 落一个子 agent jsonl(末行=lastLine),设定 mtime(秒);返回对应主 jsonl 路径
+  function subagent(base: string, rel: string, mtimeSec: number, lastLine: string): string {
+    const full = join(TMP, base, 'subagents', rel);
+    mkdirSync(dirname(full), { recursive: true });
+    writeFileSync(full, lastLine + '\n', 'utf8');
+    utimesSync(full, mtimeSec, mtimeSec);
+    return join(TMP, base + '.jsonl');
+  }
+
+  it('没有 subagents 目录 → false(即使 pendingWorkflow>0 也不卡黄)', () => {
+    const p = join(TMP, 'bg-nosub.jsonl');
+    writeFileSync(p, '{}\n', 'utf8');
+    expect(backgroundWorkRunning(p, 0, nowMs)).toBe(false);
+    expect(backgroundWorkRunning(p, 3, nowMs)).toBe(false);
+  });
+  it('子 agent 文件 90s 内写过 → true(快判,不看末行;刚写完 end_turn 的也算余量)', () => {
+    expect(backgroundWorkRunning(subagent('bg1', 'agent-a.jsonl', baseSec - 10, RUNNING_LINE), 0, nowMs)).toBe(true);
+    expect(backgroundWorkRunning(subagent('bg1b', 'agent-a.jsonl', baseSec - 10, DONE_LINE), 0, nowMs)).toBe(true);
+  });
+  it('静默(>90s,<6min)+ 末行未 end_turn(子 agent 在跑)→ true', () => {
+    expect(backgroundWorkRunning(subagent('bg2', 'agent-a.jsonl', baseSec - 200, RUNNING_LINE), 0, nowMs)).toBe(true);
+  });
+  it('静默(>90s,<6min)+ 末行 end_turn(子 agent 已答完)→ false', () => {
+    expect(backgroundWorkRunning(subagent('bg3', 'agent-a.jsonl', baseSec - 200, DONE_LINE), 0, nowMs)).toBe(false);
+  });
+  it('超 6min 没动 → false(防崩溃卡死,不管末行/pendingWorkflow)', () => {
+    const p = subagent('bg4', 'agent-a.jsonl', baseSec - 400, RUNNING_LINE);
+    expect(backgroundWorkRunning(p, 0, nowMs)).toBe(false);
+    expect(backgroundWorkRunning(p, 5, nowMs)).toBe(false);
+  });
+  it('递归扫到 workflow 深层子目录(subagents/workflows/wf_*/agent-*.jsonl)', () => {
+    expect(backgroundWorkRunning(subagent('bg5', join('workflows', 'wf_x', 'agent-b.jsonl'), baseSec - 5, RUNNING_LINE), 0, nowMs)).toBe(true);
+  });
+  it('多个子 agent:一个已完成 + 一个在跑(均静默)→ true(遍历到在跑的)', () => {
+    subagent('bg6', 'agent-done.jsonl', baseSec - 200, DONE_LINE);
+    const p = subagent('bg6', 'agent-run.jsonl', baseSec - 150, RUNNING_LINE);
+    expect(backgroundWorkRunning(p, 0, nowMs)).toBe(true);
+  });
+  it('兜底:agent 都已完成 + 静默 + pendingWorkflow>0 → true(workflow 编排间隙)', () => {
+    expect(backgroundWorkRunning(subagent('bg7', 'agent-a.jsonl', baseSec - 200, DONE_LINE), 1, nowMs)).toBe(true);
+  });
+  it('journal.jsonl 不参与判定(非 agent- 前缀;它没有 end_turn,误纳入会假阳)', () => {
+    subagent('bg8', 'agent-a.jsonl', baseSec - 200, DONE_LINE); // 唯一的 agent 已完成
+    const jp = join(TMP, 'bg8', 'subagents', 'workflows', 'wf_x', 'journal.jsonl');
+    mkdirSync(dirname(jp), { recursive: true });
+    writeFileSync(jp, JSON.stringify({ type: 'result', agentId: 'x' }) + '\n', 'utf8');
+    utimesSync(jp, baseSec - 100, baseSec - 100); // journal 更新,但应被忽略
+    expect(backgroundWorkRunning(join(TMP, 'bg8.jsonl'), 0, nowMs)).toBe(false);
   });
 });
 

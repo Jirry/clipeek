@@ -66,6 +66,19 @@ export interface SavedPosition {
   topCenter: boolean;
 }
 
+/** 灯的颜色;'off' = 灭(灯条上画暗点占位,不抢眼但不让人以为会话没了)。 */
+export type LightColor = 'red' | 'amber' | 'green' | 'off';
+
+/** 一种灯效:颜色 + 是否闪烁 + 闪烁周期(ms,仅 blink=true 时生效)。 */
+export interface LightFx {
+  color: LightColor;
+  blink: boolean;
+  blinkMs: number;
+}
+
+/** 可被用户自定义灯效的会话状态(exited=灯消失,不参与映射)。 */
+export type LightStateKey = 'error' | 'needsInput' | 'working' | 'attention' | 'done';
+
 /** 持久化配置(写在 userData 下的 config.json)。 */
 export interface Config {
   /** 上次窗口左上角(仅用于「上次在哪块屏」的定位;贴边落点由 dockRight/dockBottom + 当前宽高实时算)。 */
@@ -98,11 +111,17 @@ export interface Config {
   topCenter: boolean;
   /** 自定义位置快照(用户记录的位置/大小/模式,一键还原),最多 3 个。 */
   positions: SavedPosition[];
+  /** 状态→灯效 自定义映射(用户可改);默认见 DEFAULT_CONFIG.lights。 */
+  lights: Record<LightStateKey, LightFx>;
 }
 
 /** UI 缩放安全范围 —— 单一来源:sanitize 的越界夹持(store.ts)与菜单放大/缩小的边界(main.ts)共用。 */
 export const SCALE_MIN = 0.6;
 export const SCALE_MAX = 2.0;
+
+/** 闪烁周期(ms)安全范围 —— sanitize 夹持与设置滑块共用(0.5s–2.0s)。 */
+export const BLINK_MIN_MS = 500;
+export const BLINK_MAX_MS = 2000;
 
 /** 默认全局快捷键。 */
 export const DEFAULT_SHORTCUTS = { jump: 'Command+J', jumpAll: 'Command+Shift+J' };
@@ -124,10 +143,33 @@ export const DEFAULT_CONFIG: Config = {
   launchAtLogin: false,
   topCenter: false,
   positions: [],
+  lights: {
+    error: { color: 'red', blink: false, blinkMs: 1200 },
+    needsInput: { color: 'amber', blink: true, blinkMs: 800 },
+    working: { color: 'amber', blink: false, blinkMs: 1200 },
+    attention: { color: 'green', blink: true, blinkMs: 1200 },
+    done: { color: 'green', blink: false, blinkMs: 1200 },
+  },
 };
 
 /** Adapter 统一接口:轮询返回当前所有会话。ClaudeCodeAdapter / CodexAdapter / MockAdapter 都实现它。 */
 export interface Adapter {
   readonly tool: string;
   poll(): Promise<Session[]> | Session[];
+}
+
+/** 自动更新的运行时状态(主进程 → 设置窗推送 / 托盘刷新;不持久化)。 */
+export interface UpdateStatus {
+  /** idle 初始 · checking 查询中 · uptodate 已最新 · available 发现新版 · downloading 下载中 · ready 已就绪待重启 · error 出错 */
+  phase: 'idle' | 'checking' | 'uptodate' | 'available' | 'downloading' | 'ready' | 'error';
+  /** 当前运行版本(app.getVersion())。 */
+  current: string;
+  /** 最新版本号(已去掉前缀 v);发现新版后才有值。 */
+  latest?: string;
+  /** 下载进度 0–100。 */
+  percent?: number;
+  /** 出错信息(phase=error)。 */
+  error?: string;
+  /** 是否支持自动更新:仅打包后的 macOS 为 true(dev / 其它平台 false,只显示版本号)。 */
+  supported: boolean;
 }

@@ -4,11 +4,12 @@ import { homedir } from 'node:os';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { Adapter, Config, Session, SessionState, STATE_PRIORITY, SCALE_MIN, SCALE_MAX, SavedPosition } from '../shared/types';
-import { loadConfig, saveConfig } from './store';
+import { loadConfig, saveConfig, sanitizeLights } from './store';
 import { ClaudeCodeAdapter } from './adapters/claude';
 import { installHook, FOCUS_DIR } from './hook';
 import { acknowledge } from './ack';
 import { pickNextJump, pickNextAny } from './jump';
+import * as updater from './updater';
 
 // userData 目录固定为小写 'clipeek',不随 productName(CliPeek)变:否则打包版 app.getName()=CliPeek 会让
 // userData 目录改名,在大小写敏感文件系统上读不到旧 config(位置/缩放/改名/快捷键)。须早于任何 getPath('userData')。
@@ -567,13 +568,21 @@ function setLayout(layout: 'bar' | 'list') {
   }
 }
 function buildMenu(): Menu {
-  return Menu.buildFromTemplate([
-    // 菜单只留高频的布局切换 + 设置入口 + 退出;缩放/显名/重置位置/恢复大小都进设置窗,不再重复。
+  // 菜单只留高频的布局切换 + 设置入口 + 退出;缩放/显名/位置都进设置窗,不再重复。
+  const items: Electron.MenuItemConstructorOptions[] = [
     { label: config.layout === 'list' ? '切换横排' : '切换竖排', click: () => setLayout(config.layout === 'list' ? 'bar' : 'list') },
     { type: 'separator' },
+  ];
+  // 新版已下载就绪 → 顶上加一条一键重启更新。
+  const u = updater.getStatus();
+  if (u.phase === 'ready') {
+    items.push({ label: `重启以更新到 v${u.latest}`, click: () => updater.installAndRestart() }, { type: 'separator' });
+  }
+  items.push(
     { label: '设置…', click: () => openSettings() },
     { label: '退出 CliPeek', click: () => app.quit() }, // 不用 role:'quit'(macOS 会给它带图标 → 整列文字右移)
-  ]);
+  );
+  return Menu.buildFromTemplate(items);
 }
 
 // —— 设置窗 ——
@@ -595,7 +604,7 @@ function openSettings(): void {
     fullscreenable: false,
     show: false,
     titleBarStyle: 'hiddenInset', // 标题栏透明融入内容(交通灯浮在顶部白区,像 AirBuddy)
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1a1816' : '#e9e7e1', // 内容区底色(暖中性),减少首帧闪白
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#2b2b30' : '#f4f4f7', // 内容区底色,与 --content 一致,减少首帧闪色
     webPreferences: {
       preload: join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -604,6 +613,12 @@ function openSettings(): void {
   });
   settingsWin.loadFile(join(__dirname, 'renderer', 'settings.html'));
   settingsWin.once('ready-to-show', () => {
+    // 默认开在偏上位置:纯居中视觉偏下,改成水平居中、垂直约 35%(在光标所在屏的工作区内)
+    if (settingsWin) {
+      const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
+      const [w, h] = settingsWin.getSize();
+      settingsWin.setPosition(Math.round(area.x + (area.width - w) / 2), Math.round(area.y + (area.height - h) * 0.35));
+    }
     app.focus({ steal: true }); // accessory app 需主动激活,设置窗才能拿键盘(录快捷键要焦点)
     settingsWin?.show();
     settingsWin?.focus();
@@ -619,6 +634,7 @@ function applySettings(partial: Partial<Config>): void {
     partial.scale = Math.round(Math.min(SCALE_MAX, Math.max(SCALE_MIN, partial.scale)) * 100) / 100;
   }
   const layoutChanged = partial.layout !== undefined && partial.layout !== config.layout;
+  if (partial.lights) partial.lights = sanitizeLights(partial.lights); // 落库前再夹一道(防非受控来源的越界灯效)
   Object.assign(config, partial);
   saveConfig(config);
   if (partial.shortcuts) {
@@ -816,6 +832,9 @@ function setupIpc() {
   ipcMain.on('settings:applyPos', (_e, index: number) => applyPosition(index));
   ipcMain.on('settings:renamePos', (_e, index: number, name: string) => renamePosition(index, name));
   ipcMain.on('settings:delPos', (_e, index: number) => deletePosition(index));
+  ipcMain.handle('update:status', () => updater.getStatus());
+  ipcMain.on('update:check', () => void updater.check());
+  ipcMain.on('update:install', () => updater.installAndRestart());
   ipcMain.on('settings:resize', (_e, h: number) => {
     if (!settingsWin || settingsWin.isDestroyed()) return;
     const [w, curH] = settingsWin.getContentSize();
@@ -844,6 +863,12 @@ app.whenReady().then(() => {
   setupIpc();
   startPolling();
   registerShortcuts(); // 按 config.shortcuts 注册 ⌘J / ⌘⇧J
+  // 自动更新:状态变化时推给设置窗(若开着),就绪时刷新托盘菜单加「重启更新」项。
+  updater.onStatus((s) => {
+    if (settingsWin && !settingsWin.isDestroyed()) settingsWin.webContents.send('update:status', s);
+    if (s.phase === 'ready') tray?.setContextMenu(buildMenu());
+  });
+  updater.start();
   // 仅当 OS 登录项与配置不一致才写(默认都 false 时不白调 → 免去 dev 下的 Operation not permitted 噪声)
   if (app.getLoginItemSettings().openAtLogin !== config.launchAtLogin) {
     app.setLoginItemSettings({ openAtLogin: config.launchAtLogin });

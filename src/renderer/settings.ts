@@ -1,5 +1,5 @@
-import type { Config, SavedPosition } from '../shared/types';
-import { DEFAULT_CONFIG, SCALE_MIN, SCALE_MAX } from '../shared/types';
+import type { Config, SavedPosition, UpdateStatus, LightColor, LightFx, LightStateKey } from '../shared/types';
+import { DEFAULT_CONFIG, SCALE_MIN, SCALE_MAX, BLINK_MIN_MS, BLINK_MAX_MS } from '../shared/types';
 import type { ClipeekApi } from '../main/preload';
 
 // 设置窗:mac 桌面 app 风(参考 AirBuddy)。顶部图标标签切面板;控件用 macOS 系统原生;表单式布局。
@@ -13,12 +13,15 @@ const ICONS: Record<string, string> = {
     '<svg viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>',
   window:
     '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg>',
+  lights:
+    '<svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2.6"/><circle cx="12" cy="12" r="2.6"/><circle cx="12" cy="19" r="2.6"/></svg>',
   general:
     '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
 };
 const TABS = [
   { key: 'shortcuts', label: '快捷键' },
   { key: 'appearance', label: '外观' },
+  { key: 'lights', label: '灯语' },
   { key: 'window', label: '窗口' },
   { key: 'general', label: '通用' },
 ] as const;
@@ -28,6 +31,7 @@ let cfg: Config = DEFAULT_CONFIG;
 let activeTab: TabKey = 'shortcuts';
 let recording: 'jump' | 'jumpAll' | null = null;
 let hintMsg = '';
+let upd: UpdateStatus = { phase: 'idle', current: '', supported: false };
 
 // —— accelerator 显示 & 从键盘事件构造 ——
 const SYM: Record<string, string> = {
@@ -244,8 +248,164 @@ function panelWindow(): HTMLElement[] {
   }
   return [field('预设位置', presetCtl), field('自定义位置', customCtl)];
 }
+// 软件更新:一个按钮随状态变形(检查更新 / 检查中 / 下载中 N% / 重启以更新 / 重试),下方小字说明版本与进度。
+function updateControl(): HTMLElement {
+  const b = el('button', 'btn');
+  if (!upd.supported) {
+    b.textContent = '检查更新';
+    b.disabled = true; // dev / 非打包版不检查
+  } else if (upd.phase === 'checking') {
+    b.textContent = '检查中…';
+    b.disabled = true;
+  } else if (upd.phase === 'available' || upd.phase === 'downloading') {
+    b.textContent = `下载中 ${upd.percent ?? 0}%`;
+    b.disabled = true;
+  } else if (upd.phase === 'ready') {
+    b.textContent = `重启以更新到 v${upd.latest}`;
+    b.classList.add('primary');
+    b.onclick = () => api.installUpdate();
+  } else if (upd.phase === 'error') {
+    b.textContent = '重试';
+    b.onclick = () => api.checkUpdate();
+  } else {
+    b.textContent = '检查更新';
+    b.onclick = () => api.checkUpdate();
+  }
+  return b;
+}
+function updateSub(): string {
+  const cur = upd.current ? `当前 v${upd.current}` : '';
+  if (!upd.supported) return `${cur} · 自动更新仅在打包版生效`;
+  switch (upd.phase) {
+    case 'checking':
+      return `${cur} · 正在检查…`;
+    case 'uptodate':
+      return `${cur} · 已是最新`;
+    case 'available':
+    case 'downloading':
+      return `发现新版本 v${upd.latest},正在后台下载…`;
+    case 'ready':
+      return `v${upd.latest} 已下载,点按重启即可完成更新`;
+    case 'error':
+      return `检查失败:${upd.error || '未知错误'}`;
+    default:
+      return cur;
+  }
+}
 function panelGeneral(): HTMLElement[] {
-  return [field('开机自启', checkbox(cfg.launchAtLogin, (v) => api.settingsSet({ launchAtLogin: v })), '登录系统时自动启动 CliPeek')];
+  return [
+    field('开机自启', checkbox(cfg.launchAtLogin, (v) => api.settingsSet({ launchAtLogin: v })), '登录系统时自动启动 CliPeek'),
+    field('软件更新', updateControl(), updateSub()),
+  ];
+}
+
+// —— 灯语:状态 → 灯效 自定义映射 ——
+const FX_STATES: { key: LightStateKey; label: string }[] = [
+  { key: 'error', label: '异常' },
+  { key: 'needsInput', label: '需介入' },
+  { key: 'working', label: '执行中' },
+  { key: 'attention', label: '该你了' },
+  { key: 'done', label: '完成' },
+];
+const FX_COLORS: { c: LightColor; label: string }[] = [
+  { c: 'red', label: '红' },
+  { c: 'amber', label: '黄' },
+  { c: 'green', label: '绿' },
+  { c: 'off', label: '灭' },
+];
+function fxColorVar(c: LightColor): string {
+  return c === 'red' ? 'var(--dot-r)' : c === 'amber' ? 'var(--dot-y)' : c === 'green' ? 'var(--dot-g)' : '#8e8e93';
+}
+// 改某状态的灯效:整张表回推(applySettings 用 Object.assign 浅合并 lights 整体)
+function setLight(key: LightStateKey, patch: Partial<LightFx>): void {
+  api.settingsSet({ lights: { ...cfg.lights, [key]: { ...cfg.lights[key], ...patch } } });
+}
+// 视觉签名:同色+同闪 = 灯条上无法区分;灭不计(多个隐藏无所谓)
+function fxSig(fx: LightFx): string | null {
+  if (fx.color === 'off') return null; // 灭不计冲突(多个隐藏无所谓)
+  return fx.blink ? `${fx.color}-blink-${fx.blinkMs}` : `${fx.color}-solid`; // 含频率:仅「色+闪+频率」全同才算真·无法区分
+}
+// 下方说明文字:把当前灯效讲清楚(预览灯 + 这句话一起放在 .field-sub 行)
+function lightDesc(fx: LightFx): string {
+  if (fx.color === 'off') return '不显示(灯条上暗点占位)';
+  const cn = fx.color === 'red' ? '红' : fx.color === 'amber' ? '黄' : '绿';
+  return fx.blink ? `${cn} · 闪烁 · ${(fx.blinkMs / 1000).toFixed(1)}s` : `${cn} · 常亮`;
+}
+function panelLights(): HTMLElement[] {
+  // 先统计每种视觉签名被哪些状态共用(查重复)
+  const groups = new Map<string, string[]>();
+  for (const s of FX_STATES) {
+    const g = fxSig(cfg.lights[s.key]);
+    if (!g) continue;
+    const arr = groups.get(g);
+    if (arr) arr.push(s.label);
+    else groups.set(g, [s.label]);
+  }
+  // 复用 .field 表单结构(标签右对齐 + 控件 + 下方说明),与其它 tab 一致
+  const rows = FX_STATES.map((s) => {
+    const fx = cfg.lights[s.key];
+    const usable = fx.color !== 'off';
+    const f = el('div', 'field');
+    const main = el('div', 'field-main');
+    main.appendChild(el('div', 'field-label', s.label));
+    const ctl = el('div', 'field-control fx-ctl');
+    // 颜色四选(含「灭」);选中的那颗按配置闪 = 实时预览(选中即预览)
+    const colors = el('div', 'fx-colors');
+    let selSwatch: HTMLElement | null = null;
+    for (const { c, label } of FX_COLORS) {
+      const on = c === fx.color;
+      const sw = el('button', `fx-swatch${on ? ' on' : ''}${c === 'off' ? ' off' : ''}`);
+      sw.title = label;
+      if (c !== 'off') sw.style.background = fxColorVar(c);
+      if (on && fx.blink && usable) {
+        sw.classList.add('blink'); // 选中 + 闪 + 非灭 → 自己按频率闪
+        sw.style.setProperty('--p-ms', `${fx.blinkMs}ms`);
+        selSwatch = sw;
+      }
+      sw.onclick = () => setLight(s.key, { color: c });
+      colors.appendChild(sw);
+    }
+    ctl.appendChild(colors);
+    // 闪烁开关(灭时禁用)
+    const blinkBtn = el('button', `fx-blink${fx.blink && usable ? ' on' : ''}`, '闪');
+    blinkBtn.disabled = !usable;
+    if (usable) blinkBtn.onclick = () => setLight(s.key, { blink: !fx.blink });
+    ctl.appendChild(blinkBtn);
+    // 频率滑块(仅可闪时启用)
+    const slider = el('input', 'fx-slider');
+    slider.type = 'range';
+    slider.min = String(BLINK_MIN_MS);
+    slider.max = String(BLINK_MAX_MS);
+    slider.step = '100';
+    slider.value = String(fx.blinkMs);
+    slider.disabled = !(usable && fx.blink);
+    ctl.appendChild(slider);
+    main.appendChild(ctl);
+    f.appendChild(main);
+    // 下方说明行:活预览灯 + 文字(+ 重复警告);与颜色选择器分属不同行,不再混淆
+    const sub = el('div', 'field-sub fx-sub');
+    const desc = el('span', undefined, lightDesc(fx));
+    sub.appendChild(desc);
+    const g = fxSig(fx);
+    const dup = g ? groups.get(g)! : [];
+    if (dup.length > 1) {
+      sub.appendChild(el('span', 'fx-warn', `· ⚠ 与「${dup.filter((l) => l !== s.label).join('/')}」相同,无法区分`));
+    }
+    f.appendChild(sub);
+    // 滑块:拖动实时更新「选中颜色点的闪速 + 说明文字」,松手才落库
+    slider.oninput = () => {
+      const ms = Number(slider.value);
+      if (selSwatch) selSwatch.style.setProperty('--p-ms', `${ms}ms`);
+      desc.textContent = lightDesc({ ...fx, blinkMs: ms });
+    };
+    slider.onchange = () => setLight(s.key, { blinkMs: Number(slider.value) });
+    return f;
+  });
+  const resetRow = el('div', 'fx-reset-row');
+  const reset = el('button', 'btn', '恢复默认灯语');
+  reset.onclick = () => api.settingsSet({ lights: DEFAULT_CONFIG.lights });
+  resetRow.appendChild(reset);
+  return [...rows, resetRow];
 }
 
 // 外壳(标题区 + 标签栏 + 空面板)只建一次;之后切 tab/更新只换面板内容、改标签高亮 —— 不重建整窗,故不抖。
@@ -283,9 +443,11 @@ function renderPanel(): void {
       ? panelShortcuts()
       : activeTab === 'appearance'
         ? panelAppearance()
-        : activeTab === 'window'
-          ? panelWindow()
-          : panelGeneral();
+        : activeTab === 'lights'
+          ? panelLights()
+          : activeTab === 'window'
+            ? panelWindow()
+            : panelGeneral();
   panelEl.replaceChildren(...parts);
   // 同步测高 + 立刻通知主进程 resize(不等 rAF):否则"新内容已显示、窗口还是旧高度"会有 ~16ms 不一致帧 → 抖。
   // 用面板底部位置(= 头部高 + 面板内容高)作为窗口目标高,窗口贴合内容、不留大块空白。
@@ -317,11 +479,16 @@ window.addEventListener('keydown', (e) => {
 
 async function init(): Promise<void> {
   cfg = await api.getConfig();
+  upd = await api.getUpdateStatus();
   buildShell();
   renderPanel();
   api.onConfig((c) => {
     cfg = c;
     renderPanel();
+  });
+  api.onUpdateStatus((s) => {
+    upd = s;
+    if (activeTab === 'general') renderPanel(); // 下载进度推送较频繁,只在「通用」tab 才重渲染
   });
   api.onShortcutResult((r) => {
     if (r.conflict) {

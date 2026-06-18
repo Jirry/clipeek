@@ -1,5 +1,5 @@
-import type { Config, Session, SessionState } from '../shared/types';
-import { STATE_PRIORITY } from '../shared/types';
+import type { Config, Session, SessionState, LightFx } from '../shared/types';
+import { STATE_PRIORITY, DEFAULT_CONFIG } from '../shared/types';
 
 // 两套窗口共用,?role= 区分:
 //   bar  横排窗:一排灯 + 悬停弹框(内置预留槽,零抖动)
@@ -42,14 +42,11 @@ const VMARGIN = MARGIN;
 const MAX_DOTS = 6;
 const MENUBAR_H = 24; // mac 标准菜单栏高 —— 状态条允许缩到这么矮(此时灯随高度同步缩小)
 
-const STATE_COLOR: Record<SessionState, string> = {
-  done: 'var(--green)',
-  attention: 'var(--green)', // 绿闪·该你了(颜色同绿,靠闪烁区分)
-  working: 'var(--amber)',
-  needsInput: 'var(--amber)',
-  error: 'var(--red)',
-  exited: 'var(--gray)',
-};
+// 把状态映射成灯效(读用户可配的 config.lights);exited=会话退出 → 灭(暗点)。横排/竖排共用。
+function lightFx(state: SessionState): LightFx {
+  if (state === 'exited') return { color: 'off', blink: false, blinkMs: 1000 };
+  return config.lights[state];
+}
 let sessions: Session[] = [];
 let config: Config = {
   x: null,
@@ -68,6 +65,7 @@ let config: Config = {
   launchAtLogin: false,
   topCenter: false,
   positions: [],
+  lights: DEFAULT_CONFIG.lights,
 };
 let dock = { bottom: true, right: true, dockH: 56, home: '' };
 let editingId: string | null = null;
@@ -177,12 +175,17 @@ function buildRow(s: Session, showPath: boolean): HTMLElement {
     window.clipeek.openSession(s.id); // 单击行 → 打开对应终端 tab
   });
   const dot = el('div', s.id === highlightId ? 'panel-dot jumped' : 'panel-dot');
-  dot.style.background = STATE_COLOR[s.state];
-  const blinking = s.state === 'needsInput' || s.state === 'attention'; // 黄闪 / 绿闪
-  // 同色微光晕(闪烁态稍强),柔和不生硬;颜色随状态,故内联设置
-  const glow = Math.round((blinking ? 6 : 3) * (config.scale || 1));
-  dot.style.boxShadow = `0 0 ${glow}px ${STATE_COLOR[s.state]}`;
-  if (blinking) dot.style.animation = 'blink 1.2s ease-in-out infinite';
+  const fx = lightFx(s.state);
+  const lit = fx.color === 'off' ? 'var(--gray)' : `var(--${fx.color})`;
+  dot.style.background = lit;
+  if (fx.color === 'off') {
+    dot.style.opacity = '0.4'; // 灭:暗灰点
+  } else {
+    // 同色微光晕(闪烁态稍强),柔和不生硬;颜色/频率随用户配置,故内联设置
+    const glow = Math.round((fx.blink ? 6 : 3) * (config.scale || 1));
+    dot.style.boxShadow = `0 0 ${glow}px ${lit}`;
+    if (fx.blink) dot.style.animation = `blink ${fx.blinkMs}ms ease-in-out infinite`;
+  }
   pr.appendChild(dot);
   pr.appendChild(editableName(s));
   if (showPath) pr.appendChild(pathEl(s.cwd)); // 窄列表时隐藏路径列
@@ -277,7 +280,7 @@ function barPad() {
 function barSig(): string {
   return (
     sessions.map((x) => `${x.id}:${x.state}:${x.name}`).join('|') +
-    `|${config.showNames}|${config.scale}|${config.width}|${config.height}|${dock.dockH}|${highlightId}`
+    `|${config.showNames}|${config.scale}|${config.width}|${config.height}|${dock.dockH}|${highlightId}|${JSON.stringify(config.lights)}`
   );
 }
 let lastBarSig = '';
@@ -321,7 +324,13 @@ function renderBar(): void {
   for (const s of sessions) {
     const cell = el('div', 'cell');
     cell.dataset.sid = s.id; // 供单击/双击区分时取会话 id
-    cell.appendChild(el('div', `light ${s.state}${s.id === highlightId ? ' jumped' : ''}`));
+    const fx = lightFx(s.state);
+    const lcls = ['light', `fx-${fx.color}`];
+    if (fx.blink && fx.color !== 'off') lcls.push('blink');
+    if (s.id === highlightId) lcls.push('jumped');
+    const lightEl = el('div', lcls.join(' '));
+    if (fx.blink && fx.color !== 'off') lightEl.style.setProperty('--blink-ms', `${fx.blinkMs}ms`);
+    cell.appendChild(lightEl);
     if (config.showNames) {
       const name = el('div', 'name'); // 跑马灯容器:超出时左右来回滚,不截断
       name.appendChild(el('span', 'name-inner', s.name));
