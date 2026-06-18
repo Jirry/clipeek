@@ -1,7 +1,7 @@
 import { app } from 'electron';
 import { readFileSync, writeFileSync, renameSync, unlinkSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { Config, DEFAULT_CONFIG, DEFAULT_SHORTCUTS, SCALE_MIN, SCALE_MAX, SavedPosition } from '../shared/types';
+import { Config, DEFAULT_CONFIG, DEFAULT_SHORTCUTS, SCALE_MIN, SCALE_MAX, SavedPosition, LightColor, LightStateKey, BLINK_MIN_MS, BLINK_MAX_MS } from '../shared/types';
 
 // 极简 JSON 持久化:窗口位置、缩放、名字显隐、自定义会话名。
 // 写在 Electron userData 目录,跨启动保留(满足「记住位置」「重命名」)。
@@ -34,6 +34,27 @@ function sanitizePositions(raw: unknown): SavedPosition[] {
       dockBottom: typeof o.dockBottom === 'boolean' ? o.dockBottom : true,
       topCenter: typeof o.topCenter === 'boolean' ? o.topCenter : false,
     });
+  }
+  return out;
+}
+
+const LIGHT_KEYS: LightStateKey[] = ['error', 'needsInput', 'working', 'attention', 'done'];
+const LIGHT_COLORS = new Set<LightColor>(['red', 'amber', 'green', 'off']);
+/** 校验状态→灯效映射(防手改/损坏);缺字段/越界回退到 DEFAULT_CONFIG.lights;周期夹到 [BLINK_MIN,MAX]。 */
+export function sanitizeLights(raw: unknown): Config['lights'] {
+  const o = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  const out = {} as Config['lights'];
+  for (const k of LIGHT_KEYS) {
+    const d = DEFAULT_CONFIG.lights[k];
+    const item = o[k] && typeof o[k] === 'object' && !Array.isArray(o[k]) ? (o[k] as Record<string, unknown>) : {};
+    out[k] = {
+      color: typeof item.color === 'string' && LIGHT_COLORS.has(item.color as LightColor) ? (item.color as LightColor) : d.color,
+      blink: typeof item.blink === 'boolean' ? item.blink : d.blink,
+      blinkMs:
+        typeof item.blinkMs === 'number' && Number.isFinite(item.blinkMs)
+          ? Math.min(BLINK_MAX_MS, Math.max(BLINK_MIN_MS, item.blinkMs))
+          : d.blinkMs,
+    };
   }
   return out;
 }
@@ -73,6 +94,7 @@ function sanitize(raw: unknown): Config {
     launchAtLogin: typeof o.launchAtLogin === 'boolean' ? o.launchAtLogin : DEFAULT_CONFIG.launchAtLogin,
     topCenter: typeof o.topCenter === 'boolean' ? o.topCenter : DEFAULT_CONFIG.topCenter,
     positions: sanitizePositions(o.positions),
+    lights: sanitizeLights(o.lights),
   };
 }
 
@@ -80,7 +102,7 @@ export function loadConfig(): Config {
   try {
     return sanitize(JSON.parse(readFileSync(configPath(), 'utf-8')));
   } catch {
-    return { ...DEFAULT_CONFIG };
+    return sanitize(undefined); // 走 sanitize 得各字段独立默认值(避免共享 DEFAULT_CONFIG 的嵌套引用被运行时就地写污染)
   }
 }
 

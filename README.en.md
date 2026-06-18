@@ -22,6 +22,8 @@
 
 Dots are ordered by urgency (red ▸ blinking amber ▸ amber ▸ blinking green ▸ green), newest activity first within a color. Closed sessions disappear on their own.
 
+> These are the **defaults**. What light effect each state maps to — color (red / amber / green), whether it blinks, the blink rate, or just **off** — is customizable in **Settings → Lights**.
+
 ## Keyboard
 
 | Shortcut | Effect |
@@ -46,6 +48,8 @@ Both shortcuts **focus the target session's terminal** and **flash that light (w
   - **List** — a vertical panel in a screen corner, with a one‑line summary, names, paths and idle time.
 - **Move / scroll / resize / zoom** — drag the handle to move (across multiple displays, or up next to the menu bar at the top of the screen); drag the dots to scroll; drag the edges to resize (squeeze it down to menu‑bar height and the dots shrink with it); set zoom in Settings. Position, size and renames are remembered across restarts.
 - **Position presets / snapshots** — three one‑click presets (bottom‑right, bottom‑left, top against the menu bar); or save the current position / size / zoom / layout as a named snapshot (up to 3) and restore it anytime.
+- **Custom lights** — remap any state (error / needs‑you / working / your‑turn / done) to any effect: color (red / amber / green), blink on/off, blink rate, or **off** (to watch only the states you care about); live preview + one‑click reset in Settings.
+- **Auto‑update** — checks for new versions, downloads in the background, and updates with one click + restart (packaged build only; not when running from source).
 - **Menu‑bar tray** — no Dock icon, no window chrome; the tray title shows an aggregate light + the number of live sessions.
 
 ## Settings
@@ -54,8 +58,9 @@ Menu‑bar icon (or right‑click a dot) → **Settings…**:
 
 - **Shortcuts** — customize `⌘J` (smart jump) and `⌘⇧J` (cycle all); just record the keys.
 - **Appearance** — zoom, bar / list layout, whether to show names under the dots.
+- **Lights** — customize each state's effect (color / blink / rate / off), with a live preview per row and one‑click reset.
 - **Window** — **presets** (bottom‑right / bottom‑left / top against the menu bar) for one‑click placement; **custom positions** save the current position, size, zoom and layout as a snapshot (up to 3, renamable) to restore in one click.
-- **General** — launch at login (start CliPeek automatically when you log in).
+- **General** — launch at login (start CliPeek automatically when you log in); **software update** (check / background download / one‑click restart‑to‑update).
 
 ## Requirements
 

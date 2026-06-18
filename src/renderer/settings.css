@@ -6,16 +6,16 @@
   --font-display: -apple-system, "SF Pro Display", "PingFang SC", system-ui, sans-serif;
   --font-body: -apple-system, "SF Pro Text", "PingFang SC", system-ui, sans-serif;
 
-  --header: #f6f6f6; /* 分隔线以上:近白工具栏色 */
-  --content: #ececec; /* 分隔线以下:内容灰 */
+  --header: #fcfcfe; /* 分隔线以上:近白工具栏色(调亮) */
+  --content: #f4f4f7; /* 分隔线以下:内容浅灰(调亮、更白净) */
   --surface: #ffffff; /* 控件/键帽表面 */
   --text: #1d1d1f;
   --dim: #86868b;
-  --line: rgba(0, 0, 0, 0.1);
+  --line: rgba(0, 0, 0, 0.08);
   --accent: #007aff; /* 系统蓝 */
   --accent-soft: rgba(0, 122, 255, 0.12);
   --check-border: rgba(0, 0, 0, 0.26);
-  --shadow: rgba(0, 0, 0, 0.08);
+  --shadow: rgba(0, 0, 0, 0.06);
   --dot-r: #ff5f57; /* mac 交通灯红黄绿(品牌点) */
   --dot-y: #febc2e;
   --dot-g: #28c840;
@@ -23,12 +23,12 @@
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --header: #36363a;
-    --content: #2a2a2c;
-    --surface: #3a3a3c;
+    --header: #3e3e44;
+    --content: #323238;
+    --surface: #46464c;
     --text: rgba(255, 255, 255, 0.92);
-    --dim: #98989d;
-    --line: rgba(255, 255, 255, 0.12);
+    --dim: #9b9ba1;
+    --line: rgba(255, 255, 255, 0.14);
     --accent: #0a84ff;
     --accent-soft: rgba(10, 132, 255, 0.24);
     --check-border: rgba(255, 255, 255, 0.3);
@@ -324,6 +324,25 @@ kbd {
   background: var(--accent-soft);
   color: var(--accent);
 }
+.btn.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+.btn.primary:hover {
+  background: var(--accent);
+  color: #fff;
+  filter: brightness(1.08);
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.btn:disabled:hover {
+  border-color: var(--line);
+  background: var(--surface);
+  color: var(--text);
+}
 
 .hint {
   margin-top: 15px;
@@ -384,7 +403,86 @@ kbd {
   background: var(--surface);
   color: var(--text);
 }
-.btn:disabled {
+
+/* 灯语:复用 .field 表单结构(标签右对齐 + 控件 + 下方说明),与其它 tab 一致 */
+.field-control.fx-ctl {
+  gap: 8px;
+}
+.fx-colors {
+  display: inline-flex;
+  gap: 5px;
+}
+.fx-swatch {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  background: var(--surface);
+  cursor: pointer;
+}
+.fx-swatch.off {
+  /* 「灭」用斜纹示意(跟随明暗主题) */
+  background: repeating-linear-gradient(45deg, var(--check-border) 0 2px, var(--surface) 2px 4px);
+}
+.fx-swatch.on {
+  border-color: var(--text);
+}
+.fx-swatch.blink {
+  /* 选中且闪的颜色点自己按频率闪 = 实时预览 */
+  animation: fxblink var(--p-ms, 1s) ease-in-out infinite;
+}
+.fx-blink {
+  flex: 0 0 auto;
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--dim);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.fx-blink.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.fx-blink:disabled {
   opacity: 0.4;
   cursor: default;
+}
+.fx-slider {
+  flex: 1 1 auto;
+  min-width: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.fx-slider:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+/* 下方说明:活预览灯 + 文字(沿用 .field-sub 左缩进,对齐到控件列;与颜色选择器分属不同行) */
+.field-sub.fx-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+@keyframes fxblink {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.7);
+  }
+}
+.fx-warn {
+  color: var(--warn);
+}
+.fx-reset-row {
+  margin-top: 18px;
+  padding-left: calc(36% + 14px); /* 对齐到控件列,融入 field 表单 */
 }

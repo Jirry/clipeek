@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { Config, Session } from '../shared/types';
+import type { Config, Session, UpdateStatus } from '../shared/types';
 
 // 横排窗(role=bar)和竖排窗(role=list)共用。窗口操作由主进程按事件来源窗口处理。
 // 注意:preload 沙箱,不能 import node 内置模块。
@@ -119,6 +119,21 @@ const api = {
     const h = (_e: unknown, r: { conflict: boolean }) => cb(r);
     ipcRenderer.on('settings:shortcutResult', h);
     return () => ipcRenderer.removeListener('settings:shortcutResult', h);
+  },
+  // —— 自动更新 ——
+  getUpdateStatus(): Promise<UpdateStatus> {
+    return ipcRenderer.invoke('update:status');
+  },
+  checkUpdate(): void {
+    ipcRenderer.send('update:check');
+  },
+  installUpdate(): void {
+    ipcRenderer.send('update:install');
+  },
+  onUpdateStatus(cb: (s: UpdateStatus) => void): () => void {
+    const h = (_e: unknown, s: UpdateStatus) => cb(s);
+    ipcRenderer.on('update:status', h);
+    return () => ipcRenderer.removeListener('update:status', h);
   },
 };
 

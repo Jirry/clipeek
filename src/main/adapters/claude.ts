@@ -18,19 +18,19 @@ import { NOTIFY_DIR, DONE_DIR, BUSY_DIR, FOCUS_DIR } from '../hook';
 const PROJECTS_DIR = join(homedir(), '.claude', 'projects');
 const ATTENTION_FRESH_MS = 5 * 60 * 1000; // 刚结束多久内算「该你了」(绿闪)
 const ATTENTION_IDLE_MS = 30 * 60 * 1000; // 有 idle_prompt(Claude 在等你)时延长到这么久
-const SUBAGENT_FRESH_MS = 30 * 1000; // 子 agent transcript 这么久内写过 → 后台在跑(主对话看着 done 也算执行中)
+const SUBAGENT_FRESH_MS = 90 * 1000; // 子 agent transcript 这么久内写过 → 肯定在写,直接判在跑(快判,不读内容)
+const SUBAGENT_STALE_MS = 6 * 60 * 1000; // 子 agent 文件超过这么久没动 → 当它已停/崩溃,不再视为在跑(防卡死上限;覆盖实测最长写盘静默 ~242s 仍留余量)
 
-/** 后台 workflow/子 agent 还在跑?子 agent transcript 写在 <sessionId>/subagents/ 下,
- *  主对话这一轮结束(transcript 不再写)但子 agent 仍在写 → 会话实际在「执行中」。 */
-function subagentLatestMtime(dir: string, depth: number): number {
-  if (depth > 4) return 0;
+/** 收集 <sessionId>/subagents/ 下所有子 agent transcript(agent-*.jsonl,含 workflow 的 subagents/workflows 子目录);
+ *  排除 journal.jsonl / meta.json 等非对话文件(它们没有 assistant end_turn,不能用于「是否答完」判定)。 */
+function subagentFiles(dir: string, depth: number, out: { path: string; mtimeMs: number }[]): void {
+  if (depth > 4) return;
   let entries: string[];
   try {
     entries = readdirSync(dir);
   } catch {
-    return 0;
+    return;
   }
-  let max = 0;
   for (const name of entries) {
     const p = join(dir, name);
     let st;
@@ -39,21 +39,36 @@ function subagentLatestMtime(dir: string, depth: number): number {
     } catch {
       continue;
     }
-    if (st.isDirectory()) {
-      const m = subagentLatestMtime(p, depth + 1);
-      if (m > max) max = m;
-    } else if (name.endsWith('.jsonl') && st.mtimeMs > max) {
-      max = st.mtimeMs;
-    }
+    if (st.isDirectory()) subagentFiles(p, depth + 1, out);
+    else if (name.startsWith('agent-') && name.endsWith('.jsonl')) out.push({ path: p, mtimeMs: st.mtimeMs });
   }
-  return max;
 }
-function backgroundWorkRunning(jsonlPath: string, now: number): boolean {
-  // 注意:不比对主 transcript —— 用户可能边跑 workflow 边在主对话聊天(主 transcript 也在写)。
-  // 只看子 agent 最近是否还在写;旧 workflow 的旧文件天然落在窗口外。
+
+/** 后台 workflow/子 agent 还在跑?子 agent transcript 写在 <sessionId>/subagents/ 下,主对话这一轮结束
+ *  (主 transcript 不再写、甚至已触发 Stop)但子 agent 仍在跑 → 会话实际在「执行中」,不该显示绿闪「该你了」。
+ *  以子 agent 自身 transcript 的结构为准、不靠纯 mtime 猜:
+ *    · 子 agent 文件 90s 内写过 → 肯定在写,在跑(快判);
+ *    · 静默但未超 6min:读该 agent 末块——未答完(末行不是 assistant end_turn)→ 仍在跑(长思考/长工具/等网络);
+ *    · 超 6min 没动 → 当它已停/崩溃,不再算(防卡死);
+ *    · 兜底:turn_duration 报告还有 workflow 未完(pendingWorkflowCount>0,Workflow 工具专有)且确有不太旧的子 agent 文件
+ *      —— 覆盖 workflow 在两批 agent 之间编排、暂无 agent 写盘的间隙。
+ *  不比对主 transcript:用户可能边跑 workflow 边在主对话聊天(主 transcript 也在写)。 */
+function backgroundWorkRunning(jsonlPath: string, pendingWorkflow: number, now: number): boolean {
   const root = jsonlPath.replace(/\.jsonl$/, '') + '/subagents';
-  const latest = subagentLatestMtime(root, 0);
-  return latest > 0 && now - latest < SUBAGENT_FRESH_MS;
+  const files: { path: string; mtimeMs: number }[] = [];
+  subagentFiles(root, 0, files);
+  if (!files.length) return false; // 没有子 agent 文件 → 没有后台子 agent
+  files.sort((a, b) => b.mtimeMs - a.mtimeMs); // 新→旧
+  for (const f of files) {
+    const idle = now - f.mtimeMs;
+    if (idle >= SUBAGENT_STALE_MS) break; // 这个及更旧的都超时,不必再看
+    if (idle < SUBAGENT_FRESH_MS) return true; // 近期在写 → 在跑
+    // 静默但未超时:看该子 agent 是否已答完(末行 assistant end_turn);未答完 → 仍在跑
+    const { kind } = scanTail(f.path, TAIL_BYTES);
+    if (!(kind?.k === 'text' && kind.endTurn)) return true;
+  }
+  // 兜底:主 turn 报告还有 workflow 未完,且确有不太旧的子 agent 文件(编排间隙)
+  return pendingWorkflow > 0 && now - files[0].mtimeMs < SUBAGENT_STALE_MS;
 }
 const TAIL_BYTES = 64 * 1024; // 只读文件尾部,避免大文件全读
 const HEAD_BYTES = 32 * 1024; // 标题行常在文件开头,尾部找不到就读头部
@@ -134,6 +149,7 @@ interface RawParse {
   cwd: string;
   kind: RawKind | null;
   title: string; // 真实会话标题:customTitle → aiTitle →(空,回退到项目名)
+  pendingWorkflow: number; // 尾部最新一条 turn_duration 的 pendingWorkflowCount(无则 0):>0 = 后台还有 workflow 未完成
   diag?: string[]; // 仅当 kind 解析不出(null)时填:尾部各行的 type(新→旧),供排查「为什么没解析出状态」
 }
 
@@ -203,16 +219,18 @@ function classify(o: any): RawKind | null {
 
 /** 扫描文件尾部 maxBytes:最近一条「非噪声」turn 事件 + 准确 cwd。
  *  types:扫到的各行 type(新→旧,封顶 8),仅在 kind 解析不出时用于排查。 */
-function scanTail(path: string, maxBytes: number): { cwd: string; kind: RawKind | null; types: string[] } {
+function scanTail(path: string, maxBytes: number): { cwd: string; kind: RawKind | null; types: string[]; pendingWorkflow: number } {
   let tail: string;
   try {
     tail = readChunk(path, true, maxBytes);
   } catch {
-    return { cwd: '', kind: null, types: [] };
+    return { cwd: '', kind: null, types: [], pendingWorkflow: 0 };
   }
   const lines = tail.split('\n');
   let cwd = '';
   let kind: RawKind | null = null;
+  let pendingWorkflow = 0;
+  let pwSeen = false; // 只认尾部第一条(=最新)turn_duration,后面更旧的不覆盖
   const types: string[] = [];
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i].trim();
@@ -225,6 +243,11 @@ function scanTail(path: string, maxBytes: number): { cwd: string; kind: RawKind 
     }
     if (types.length < 8) types.push(o.type === 'system' ? `system:${o.subtype || '?'}` : String(o.type || '?'));
     if (!cwd && typeof o.cwd === 'string') cwd = o.cwd;
+    // 最新一条 turn_duration 报告的「后台未完成 workflow 数」(turn_duration 写在 turn 末尾,比 assistant text 更靠尾,先被扫到)
+    if (!pwSeen && o.type === 'system' && o.subtype === 'turn_duration') {
+      pwSeen = true;
+      pendingWorkflow = typeof o.pendingWorkflowCount === 'number' ? o.pendingWorkflowCount : 0;
+    }
     if (!kind) {
       if (o.type === 'system' && o.subtype === 'api_error') {
         // 自动重试中(retryAttempt < maxRetries)是瞬时态,不判红;只有终态失败才红
@@ -234,9 +257,9 @@ function scanTail(path: string, maxBytes: number): { cwd: string; kind: RawKind 
         kind = classify(o);
       }
     }
-    if (cwd && kind) break;
+    if (cwd && kind) break; // turn_duration 写在 turn 末尾、比 assistant text 更靠文件尾,故已先于 kind 被扫到(pendingWorkflow 已就绪)
   }
-  return { cwd, kind, types };
+  return { cwd, kind, types, pendingWorkflow };
 }
 
 /** 从文件尾部解析 cwd + 状态 + 标题。末条记录超大(带图/大文件)时扩读,避免会话被丢。 */
@@ -244,8 +267,9 @@ function parseRaw(path: string): RawParse | null {
   let cwd = '';
   let kind: RawKind | null = null;
   let types: string[] = [];
+  let pendingWorkflow = 0;
   for (const bytes of [TAIL_BYTES, TAIL_BYTES * 8]) {
-    ({ cwd, kind, types } = scanTail(path, bytes)); // 64KB → 512KB:末条巨大时再扩读一次
+    ({ cwd, kind, types, pendingWorkflow } = scanTail(path, bytes)); // 64KB → 512KB:末条巨大时再扩读一次
     if (cwd) break;
   }
   if (!cwd) return null;
@@ -263,7 +287,7 @@ function parseRaw(path: string): RawParse | null {
       /* 忽略 */
     }
   }
-  return { cwd, kind, title, diag: kind === null ? types : undefined };
+  return { cwd, kind, title, pendingWorkflow, diag: kind === null ? types : undefined };
 }
 
 /** 状态判定:只有 assistant 末块为 text 且 stop_reason==='end_turn' 才算「完成」;
@@ -548,7 +572,7 @@ export class ClaudeCodeAdapter implements Adapter {
           }
         }
         // 看着 done/绿闪,但后台 workflow/子 agent 还在跑 → 其实在执行中(黄)
-        if ((state === 'done' || state === 'attention') && backgroundWorkRunning(e.path, now)) {
+        if ((state === 'done' || state === 'attention') && backgroundWorkRunning(e.path, e.raw.pendingWorkflow, now)) {
           state = 'working';
           detail = 'executing';
         }
@@ -571,5 +595,5 @@ export class ClaudeCodeAdapter implements Adapter {
 }
 
 // 暴露纯逻辑给单元测试(仅供 *.test.ts 导入,运行时主流程不依赖这些再导出)。
-export { classify, deriveState, scanTitle, scanTail, parseRaw, readNotify, readDone, readBusy, encodeDirs, projectName };
+export { classify, deriveState, scanTitle, scanTail, parseRaw, readNotify, readDone, readBusy, backgroundWorkRunning, encodeDirs, projectName };
 export type { RawKind };

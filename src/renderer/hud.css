@@ -223,36 +223,33 @@ body {
   width: var(--dot);
   height: var(--dot);
   border-radius: 50%;
-  background: var(--gray);
+  --lit: var(--gray); /* 当前灯色,由 fx-* class 设;默认灰 */
+  --glow: 3; /* 光晕半径(px):常亮 3、闪烁 5 */
+  background: var(--lit);
+  box-shadow: 0 0 calc(var(--glow) * 1px * var(--scale)) var(--lit); /* 同色微光晕,柔和不生硬 */
   transition: background 0.25s ease;
 }
-.light.done {
-  background: var(--green);
-  box-shadow: 0 0 calc(3px * var(--scale)) var(--green); /* 一点点同色微光晕,柔和不生硬 */
+/* 灯色:由 config.lights 的 color 映射成 fx-* class(渲染层加) */
+.light.fx-red {
+  --lit: var(--red);
 }
-.light.working {
-  background: var(--amber);
-  box-shadow: 0 0 calc(3px * var(--scale)) var(--amber);
+.light.fx-amber {
+  --lit: var(--amber);
 }
-.light.error {
-  background: var(--red);
-  box-shadow: 0 0 calc(3px * var(--scale)) var(--red);
+.light.fx-green {
+  --lit: var(--green);
 }
+.light.fx-off,
 .light.exited {
-  background: var(--gray);
+  /* 灭 / 已退出:暗灰点,无光晕 */
+  --lit: var(--gray);
+  box-shadow: none;
   opacity: 0.4;
 }
-.light.needsInput {
-  background: var(--amber);
-  box-shadow: 0 0 calc(5px * var(--scale)) var(--amber);
-  animation: blink 0.8s ease-in-out infinite; /* 黄闪=需介入,更紧急 → 比绿闪快 */
-  will-change: transform, opacity;
-}
-/* 绿闪·该你了:和黄闪同样抢眼,只是绿色 */
-.light.attention {
-  background: var(--green);
-  box-shadow: 0 0 calc(5px * var(--scale)) var(--green);
-  animation: blink 1.2s ease-in-out infinite;
+/* 闪烁:光晕更强 + blink 动画;周期由 --blink-ms 控制(渲染层按各状态频率设,默认 1s) */
+.light.blink {
+  --glow: 5;
+  animation: blink var(--blink-ms, 1s) ease-in-out infinite;
   will-change: transform, opacity;
 }
 @keyframes blink {
@@ -274,7 +271,7 @@ body {
 .panel-dot.jumped {
   /* !important:盖过竖排灯(panel-dot)在 JS 里内联设的 box-shadow 光晕 */
   box-shadow: inset 0 0 0 calc(3px * var(--scale)) #fff !important;
-  animation: jumpHi 0.5s ease-in-out 2; /* 缩放脉冲两下 + 变亮;缩小不溢出,动态 + 变亮最抓眼 */
+  animation: jumpHi 0.5s ease-in-out 2 !important; /* !important:盖过竖排内联的 blink 动画,跳转脉冲两下 + 变亮完整生效 */
 }
 @keyframes jumpHi {
   0%,
