@@ -41,6 +41,8 @@ const MARGIN = 0; // 无边距:玻璃面完全贴紧屏幕边缘
 const VMARGIN = MARGIN;
 const MAX_DOTS = 6;
 const MENUBAR_H = 24; // mac 标准菜单栏高 —— 状态条允许缩到这么矮(此时灯随高度同步缩小)
+const BAR_BORDER = 2; // .bar-surface 上下边框各 1px,固定不随 scale 缩;算灯缩放时要从基数里排除,否则矮高度下灯会超出被裁
+const GLOW_PAD = 6; // 矮高度让灯比滚动区小 ~6px(上下各 3px):圆灯内切方形滚动区时圆顶/圆底会贴 overflow 边界被切平,留此余量避免
 
 // 把状态映射成灯效(读用户可配的 config.lights);exited=会话退出 → 灭(暗点)。横排/竖排共用。
 function lightFx(state: SessionState): LightFx {
@@ -291,7 +293,7 @@ function renderBar(): void {
   lastBarSig = sig;
   // 注意:不在这里读 .bar-scroll.scrollLeft —— 连续重渲染时会读到刚建好(scrollLeft=0)的新元素而丢位置。
   // savedScrollLeft 由 .bar-scroll 的 scroll 事件实时维护(见下),这里只在 fitBar 里恢复。
-  document.documentElement.style.setProperty('--scale', String(effScale())); // 灯随状态条高度自适应缩放
+  applyBarScale(effScale()); // 灯随状态条高度自适应缩放;矮高度下去光晕(--glow-k=0,见 applyBarScale)
   const p = barPad();
   app.style.margin = `${p.top}px ${p.right}px ${p.bottom}px ${p.left}px`;
 
@@ -396,7 +398,7 @@ function naturalHeight(): number {
   const padV = 8 * s; // --pad-v
   const dot = 20 * s; // --dot
   const nameBlock = config.showNames ? 4 * s + 13 * s : 0; // cell 间隔 + 名字行高
-  return Math.ceil(2 * padV + dot + nameBlock + 2); // +2 上下边框
+  return Math.ceil(2 * padV + dot + nameBlock + BAR_BORDER); // 上下边框(固定 2px,不随 scale)
 }
 // 状态条高度:用户拖过顶边 → config.height;否则默认 = Dock 高 × 缩放;但都不低于内容自然高度。
 function barHeight(): number {
@@ -409,7 +411,19 @@ function barHeight(): number {
 function effScale(h = barHeight()): number {
   const s = config.scale || 1;
   const natH = naturalHeight();
-  return h < natH ? Math.max(0.3, (s * h) / natH) : s;
+  if (h >= natH) return s; // 默认高度:不缩,外观不变
+  // 矮高度:可用高度先扣掉固定边框 + 光晕呼吸(GLOW_PAD),剩下才给可缩内容(灯+内边距)→ 让「灯+光晕」整体 fit、不贴边被裁
+  const usable = Math.max(0, h - BAR_BORDER - GLOW_PAD);
+  return Math.max(0.3, (s * usable) / (natH - BAR_BORDER));
+}
+// 统一设灯缩放变量:矮高度下灯被压缩(eff < 设定 scale)时,光晕(box-shadow)同步收一档(--glow-k),
+// 否则大模糊光晕在矮窗口里会撞上下边被切成平边(灯本体已 fit,生硬感来自光晕被裁)。
+function applyBarScale(eff: number): void {
+  const root = document.documentElement.style;
+  root.setProperty('--scale', String(eff));
+  // 矮高度(灯被压缩)下索性去掉光晕(box-shadow):24px 菜单栏高放不下「灯+完整光晕」,
+  // 留着只会被窗口边切成平边、更生硬。灯改用干净纯色圆,完整清晰;默认高度仍有柔和微光晕。
+  root.setProperty('--glow-k', eff < (config.scale || 1) ? '0' : '1');
 }
 function naturalWidth(p: { left: number; right: number }): number {
   const s = effScale();
@@ -610,7 +624,7 @@ async function init() {
       if (bar) {
         const p = barPad();
         const innerH = Math.max(0, h - p.top - p.bottom);
-        document.documentElement.style.setProperty('--scale', String(effScale(innerH))); // 拉伸中实时随高度缩灯(跟手,不等松手)
+        applyBarScale(effScale(innerH)); // 拉伸中实时随高度缩灯(跟手);矮高度光晕同步收
         bar.style.width = `${Math.max(0, w - p.left - p.right)}px`;
         bar.style.minHeight = `${innerH}px`;
       }
