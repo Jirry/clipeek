@@ -226,7 +226,7 @@ body {
   --lit: var(--gray); /* 当前灯色,由 fx-* class 设;默认灰 */
   --glow: 3; /* 光晕半径(px):常亮 3、闪烁 5 */
   background: var(--lit);
-  box-shadow: 0 0 calc(var(--glow) * 1px * var(--scale)) var(--lit); /* 同色微光晕,柔和不生硬 */
+  box-shadow: 0 0 calc(var(--glow) * 1px * var(--scale) * var(--glow-k, 1)) var(--lit); /* 同色微光晕;--glow-k 在矮高度收一档,免被窗口边切成平边 */
   transition: background 0.25s ease;
 }
 /* 灯色:由 config.lights 的 color 映射成 fx-* class(渲染层加) */
