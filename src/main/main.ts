@@ -681,9 +681,9 @@ function applyPreset(kind: 'br' | 'bl' | 'tc'): void {
     config.topCenter = true;
     config.dockBottom = false;
     config.dockRight = false;
-    config.showNames = false; // 顶部贴菜单栏,空间窄 → 不显灯下名
+    config.showNames = false; // 顶部空间窄 → 不显灯下名
     const d = barWin ? screen.getDisplayMatching(barWin.getBounds()) : screen.getPrimaryDisplay();
-    config.height = menubarHeight(d);
+    config.height = Math.max(menubarHeight(d), 36); // 顶部条高度;略矮于灯自然高(38)时灯随高小幅缩成纯色圆(v0.1.6 已修不裁切)
   } else {
     config.topCenter = false;
     config.dockBottom = true;
