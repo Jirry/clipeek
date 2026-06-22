@@ -7,13 +7,7 @@ import { createWriteStream, writeFileSync, mkdtempSync, existsSync, rmSync } fro
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import type { UpdateStatus } from '../shared/types';
-import { cmpVer, pickAsset, shq } from './updater-util';
-
-interface GhAsset {
-  name: string;
-  browser_download_url: string;
-  size: number;
-}
+import { cmpVer, shq } from './updater-util';
 
 const REPO = 'Jirry/clipeek';
 const CHECK_INTERVAL = 6 * 60 * 60 * 1000; // 每 6 小时查一次
@@ -40,26 +34,37 @@ function set(p: Partial<UpdateStatus>): void {
   listener(status);
 }
 
-// GitHub API JSON(net 走系统网络栈,自动跟随重定向,无需额外依赖)。
-function fetchJSON(url: string): Promise<any> {
+// 查最新版本 tag:走 github.com/releases/latest 的 302 重定向(下载/页面通道,不受 api.github.com 的 60次/小时/IP 限流)。
+// electron-updater 等主流方案也是走 github.com 资产而非 API,这里思路一致(本 app 未签名故手动实现)。
+function fetchLatestTag(): Promise<string> {
   return new Promise((resolve, reject) => {
-    const req = net.request(url);
+    const req = net.request({ url: `https://github.com/${REPO}/releases/latest`, redirect: 'manual' });
     req.setHeader('User-Agent', 'CliPeek-Updater');
-    req.setHeader('Accept', 'application/vnd.github+json');
+    let settled = false;
+    req.on('redirect', (_status: number, _method: string, redirectUrl: string) => {
+      if (settled) return;
+      settled = true;
+      req.abort(); // 拿到重定向目标(/releases/tag/vX.Y.Z)即可,不必真去下载那个页面
+      const m = redirectUrl.match(/\/releases\/tag\/([^/?#]+)/);
+      if (m) resolve(decodeURIComponent(m[1]));
+      else reject(new Error(`无法从重定向解析版本: ${redirectUrl}`));
+    });
     req.on('response', (res) => {
-      const code = res.statusCode ?? 0;
-      let body = '';
-      res.on('data', (c) => (body += c));
+      // 意外没重定向(直出 200/4xx):读完丢弃并报错
+      res.on('data', () => {});
       res.on('end', () => {
-        if (code >= 400) return reject(new Error(`GitHub API HTTP ${code}`));
-        try {
-          resolve(JSON.parse(body));
-        } catch {
-          reject(new Error('返回非 JSON'));
+        if (!settled) {
+          settled = true;
+          reject(new Error(`releases/latest 未重定向(HTTP ${res.statusCode ?? 0})`));
         }
       });
     });
-    req.on('error', reject);
+    req.on('error', (e) => {
+      if (!settled) {
+        settled = true;
+        reject(e);
+      }
+    });
     req.end();
   });
 }
@@ -73,24 +78,24 @@ export async function check(): Promise<void> {
   if (status.phase === 'checking' || status.phase === 'downloading') return; // 进行中不重入
   set({ phase: 'checking', supported: true, error: undefined });
   try {
-    const rel = await fetchJSON(`https://api.github.com/repos/${REPO}/releases/latest`);
-    const latest = String(rel?.tag_name ?? '').replace(/^v/i, '');
+    const tag = await fetchLatestTag(); // 如 "v0.1.8"
+    const latest = tag.replace(/^v/i, '');
     if (!latest) throw new Error('未取到版本号');
     if (cmpVer(latest, status.current) <= 0) {
       set({ phase: 'uptodate', latest });
       return;
     }
-    const assets: GhAsset[] = Array.isArray(rel.assets) ? rel.assets : [];
-    const asset = pickAsset(assets, latest, process.arch);
-    if (!asset?.browser_download_url) throw new Error(`无 ${process.arch} 安装包`);
+    // 资产命名固定(package.json build.artifactName = ${productName}-${version}-${arch}.${ext}),直接构造下载 URL,走 github.com 下载通道(不限流)
+    const name = `CliPeek-${latest}-${process.arch}.zip`;
+    const url = `https://github.com/${REPO}/releases/download/${tag}/${name}`;
     set({ phase: 'available', latest });
-    await download(asset.browser_download_url, asset.name, Number(asset.size) || 0, latest);
+    await download(url, name, latest);
   } catch (e) {
     set({ phase: 'error', error: e instanceof Error ? e.message : String(e) });
   }
 }
 
-async function download(url: string, name: string, size: number, latest: string): Promise<void> {
+async function download(url: string, name: string, latest: string): Promise<void> {
   if (!supported()) return; // 纵深守卫(check 已守卫;防日后新增调用点在 dev 误触发真下载)
   // 清掉上一轮残留的下载目录,避免反复 check / 多次发版在 tmp 累积(zip 本体 ~300MB)
   if (readyZip) {
@@ -114,6 +119,7 @@ async function download(url: string, name: string, size: number, latest: string)
           reject(new Error(`下载 HTTP ${code}`));
           return;
         }
+        const size = Number(res.headers['content-length']) || 0; // 从响应头拿大小算进度(不再依赖 API 的 asset.size)
         const out = createWriteStream(file);
         let got = 0;
         let lastPct = -10;
