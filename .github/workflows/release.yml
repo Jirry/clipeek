@@ -15,9 +15,9 @@ jobs:
   build-macos:
     runs-on: macos-14 # Apple Silicon runner(秒启动;macos-13 当前排队拿不到机器)。DMG 的 hdiutil 偶发失败靠下方重试兜
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
@@ -57,12 +57,13 @@ jobs:
 
       - name: Attach to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             release/*.dmg
             release/*.zip
           fail_on_unmatched_files: true
+          generate_release_notes: true # 自动生成「What's Changed」(自上个 tag 起合并的 PR),接在下方 body 之后
           body: |
             ### 📦 下载
 
