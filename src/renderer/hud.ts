@@ -68,6 +68,8 @@ let config: Config = {
   topCenter: false,
   positions: [],
   lights: DEFAULT_CONFIG.lights,
+  trayStyle: 'icon',
+  trayShowCount: false,
 };
 let dock = { bottom: true, right: true, dockH: 56, home: '' };
 let editingId: string | null = null;

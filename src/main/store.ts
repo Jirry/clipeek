@@ -95,6 +95,8 @@ function sanitize(raw: unknown): Config {
     topCenter: typeof o.topCenter === 'boolean' ? o.topCenter : DEFAULT_CONFIG.topCenter,
     positions: sanitizePositions(o.positions),
     lights: sanitizeLights(o.lights),
+    trayStyle: o.trayStyle === 'lights' ? 'lights' : 'icon',
+    trayShowCount: typeof o.trayShowCount === 'boolean' ? o.trayShowCount : DEFAULT_CONFIG.trayShowCount,
   };
 }
 

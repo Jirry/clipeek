@@ -14,13 +14,13 @@
 
 | Light | Meaning |
 | --- | --- |
-| 🟢 Green | Done — idle, waiting for you |
-| 🟢 Green, blinking | Done, your turn — just finished, or the agent is waiting for your input |
-| 🟡 Amber | Working — thinking, running a tool, or replying |
-| 🟡 Amber, blinking | Needs you — permission prompt, a question, or plan approval |
 | 🔴 Red | Error — API error / crash |
+| 🔴 Red, blinking | Needs you — permission prompt, a question, or plan approval |
+| 🟡 Amber | Working — thinking, running a tool, or replying |
+| 🟢 Green, blinking | Your turn — just finished, or the agent is waiting for your input |
+| ⚪ Off, dim dot | Done — idle, parked (an unobtrusive placeholder) |
 
-Dots are ordered by urgency (red ▸ blinking amber ▸ amber ▸ blinking green ▸ green), newest activity first within a color. Closed sessions disappear on their own.
+Dots are ordered by urgency (red ▸ blinking red ▸ amber ▸ blinking green ▸ off), newest activity first within a state. Closed sessions disappear on their own.
 
 > These are the **defaults**. What light effect each state maps to — color (red / amber / green), whether it blinks, the blink rate, or just **off** — is customizable in **Settings → Lights**.
 
@@ -34,7 +34,7 @@ Dots are ordered by urgency (red ▸ blinking amber ▸ amber ▸ blinking green
 
 Both shortcuts **focus the target session's terminal** and **flash that light (white ring + pulse, ~2.5s)** — pressing again reverts the previous one immediately. They share one "current" cursor, so "next" always moves on from the current dot.
 
-- **`⌘J` (smart):** cycles **active** sessions by urgency — **🔴 error ▸ 🟡 blinking amber (needs you) ▸ 🟡 amber (working) ▸ 🟢 blinking green (your turn)**; only if there are none does it fall back to your 🟢 green (done / idle) ones.
+- **`⌘J` (smart):** cycles **active** sessions by urgency — **🔴 error ▸ 🔴 blinking red (needs you) ▸ 🟡 amber (working) ▸ 🟢 blinking green (your turn)**; only if there are none does it fall back to the rest (done / idle).
 - **`⌘⇧J` (cycle all):** ignores state and steps through **every** light in bar order — always reaches any session (working, green, anything).
 
 > Both shortcuts can be customized in **Settings** (record your own combo). Note `⌘J` is a global shortcut and will override ⌘J in your other apps.
@@ -50,7 +50,7 @@ Both shortcuts **focus the target session's terminal** and **flash that light (w
 - **Position presets / snapshots** — three one‑click presets (bottom‑right, bottom‑left, top against the menu bar); or save the current position / size / zoom / layout as a named snapshot (up to 3) and restore it anytime.
 - **Custom lights** — remap any state (error / needs‑you / working / your‑turn / done) to any effect: color (red / amber / green), blink on/off, blink rate, or **off** (to watch only the states you care about); live preview + one‑click reset in Settings.
 - **Auto‑update** — checks for new versions, downloads in the background, and updates with one click + restart (packaged build only; not when running from source).
-- **Menu‑bar tray** — no Dock icon, no window chrome; the tray title shows an aggregate light + the number of live sessions.
+- **Menu‑bar tray** — no Dock icon, no window chrome. The menu‑bar icon can be a **fixed icon** (a monochrome three‑dot mark that inverts with light/dark) or a **traffic light** (colored by the most urgent session, blinking when that state blinks); the live session count is optional. **Left‑click** jumps to the session that most needs attention, **right‑click** opens the menu.
 
 ## Settings
 
@@ -60,7 +60,7 @@ Menu‑bar icon (or right‑click a dot) → **Settings…**:
 - **Appearance** — zoom, bar / list layout, whether to show names under the dots.
 - **Lights** — customize each state's effect (color / blink / rate / off), with a live preview per row and one‑click reset.
 - **Window** — **presets** (bottom‑right / bottom‑left / top against the menu bar) for one‑click placement; **custom positions** save the current position, size, zoom and layout as a snapshot (up to 3, renamable) to restore in one click.
-- **General** — launch at login (start CliPeek automatically when you log in); **software update** (check / background download / one‑click restart‑to‑update).
+- **General** — launch at login (start CliPeek automatically when you log in); **menu‑bar icon** (fixed icon / traffic light) and **whether to show the count** (switching style auto‑adjusts the count default); **software update** (check / background download / one‑click restart‑to‑update).
 
 ## Requirements
 
