@@ -129,6 +129,20 @@ function layoutToggle(): HTMLElement {
   wrap.append(mk('bar', '横排', 'dots-h'), mk('list', '竖排', 'dots-v'));
   return wrap;
 }
+// 菜单栏图标样式:固定图标(单色三盏灯) / 红绿灯(按最紧要的灯着色)
+function trayStyleToggle(): HTMLElement {
+  const wrap = el('div', 'lay');
+  const mk = (v: 'icon' | 'lights', label: string): HTMLElement => {
+    const o = el('button', cfg.trayStyle === v ? 'lay-opt on' : 'lay-opt');
+    o.append(el('span', undefined, label));
+    o.onclick = () => {
+      if (cfg.trayStyle !== v) api.settingsSet({ trayStyle: v });
+    };
+    return o;
+  };
+  wrap.append(mk('icon', '固定图标'), mk('lights', '红绿灯'));
+  return wrap;
+}
 function stepper(): HTMLElement {
   const wrap = el('div', 'stepper');
   const minus = el('button', undefined, '−');
@@ -295,6 +309,8 @@ function updateSub(): string {
 function panelGeneral(): HTMLElement[] {
   return [
     field('开机自启', checkbox(cfg.launchAtLogin, (v) => api.settingsSet({ launchAtLogin: v })), '登录系统时自动启动 CliPeek'),
+    field('菜单栏图标', trayStyleToggle(), '固定图标=单色三盏灯;红绿灯=按当前最紧要的灯着色(切换会自动调整下方数字默认)'),
+    field('菜单栏显示数字', checkbox(cfg.trayShowCount, (v) => api.settingsSet({ trayShowCount: v })), '托盘图标旁显示活跃会话数;关掉只留图标'),
     field('软件更新', updateControl(), updateSub()),
   ];
 }

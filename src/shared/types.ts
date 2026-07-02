@@ -113,6 +113,10 @@ export interface Config {
   positions: SavedPosition[];
   /** 状态→灯效 自定义映射(用户可改);默认见 DEFAULT_CONFIG.lights。 */
   lights: Record<LightStateKey, LightFx>;
+  /** 菜单栏托盘图标样式:'icon'=单色三盏灯固定图标 / 'lights'=按「第一个灯」状态着色的红绿灯点。 */
+  trayStyle: 'icon' | 'lights';
+  /** 菜单栏图标旁是否显示活跃会话数。默认随样式(红绿灯→显示、固定图标→不显);用户可单独覆盖。 */
+  trayShowCount: boolean;
 }
 
 /** UI 缩放安全范围 —— 单一来源:sanitize 的越界夹持(store.ts)与菜单放大/缩小的边界(main.ts)共用。 */
@@ -144,12 +148,14 @@ export const DEFAULT_CONFIG: Config = {
   topCenter: false,
   positions: [],
   lights: {
-    error: { color: 'red', blink: false, blinkMs: 1200 },
-    needsInput: { color: 'amber', blink: true, blinkMs: 800 },
-    working: { color: 'amber', blink: false, blinkMs: 1200 },
-    attention: { color: 'green', blink: true, blinkMs: 1200 },
-    done: { color: 'green', blink: false, blinkMs: 1200 },
+    error: { color: 'red', blink: false, blinkMs: 1200 }, // 异常:红
+    needsInput: { color: 'red', blink: true, blinkMs: 800 }, // 需介入:红闪
+    working: { color: 'amber', blink: false, blinkMs: 1200 }, // 执行中:黄
+    attention: { color: 'green', blink: true, blinkMs: 1200 }, // 该你了:绿闪
+    done: { color: 'off', blink: false, blinkMs: 1200 }, // 完成:暗点占位
   },
+  trayStyle: 'icon',
+  trayShowCount: false, // 默认固定图标 → 不显数字(切到红绿灯样式会联动开启)
 };
 
 /** Adapter 统一接口:轮询返回当前所有会话。ClaudeCodeAdapter / CodexAdapter / MockAdapter 都实现它。 */

@@ -1,10 +1,11 @@
-import { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, nativeTheme, screen, shell, globalShortcut } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, Tray, nativeTheme, screen, shell, globalShortcut } from 'electron';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { Adapter, Config, Session, SessionState, STATE_PRIORITY, SCALE_MIN, SCALE_MAX, SavedPosition } from '../shared/types';
+import { Adapter, Config, Session, SessionState, STATE_PRIORITY, SCALE_MIN, SCALE_MAX, SavedPosition, LightColor } from '../shared/types';
 import { loadConfig, saveConfig, sanitizeLights } from './store';
+import { trayIconDots, trayIconLight } from './tray-icon';
 import { ClaudeCodeAdapter } from './adapters/claude';
 import { installHook, FOCUS_DIR } from './hook';
 import { acknowledge } from './ack';
@@ -541,18 +542,68 @@ function saveBarPos() {
 }
 
 // —— 托盘 ——
-function aggregateEmoji(s: Session[]): string {
+// 单色模板图标看不出红黄绿(颜色状态看 HUD 灯条),故把状态摘要塞进 hover tooltip 兜底。
+function trayTooltip(s: Session[]): string {
   const live = s.filter((x) => x.state !== 'exited');
-  if (live.some((x) => x.state === 'error')) return '🔴';
-  if (live.some((x) => x.state === 'needsInput')) return '🔔';
-  if (live.some((x) => x.state === 'working')) return '🟡';
-  if (live.length) return '🟢';
-  return '⚪';
+  if (!live.length) return 'CliPeek · 空闲';
+  const parts: string[] = [];
+  const push = (label: string, st: SessionState) => {
+    const c = live.filter((x) => x.state === st).length;
+    if (c) parts.push(`${label}${c}`);
+  };
+  push('异常', 'error');
+  push('需介入', 'needsInput');
+  push('执行中', 'working');
+  push('待你', 'attention');
+  push('休眠', 'done');
+  return `CliPeek · ${live.length} 个会话${parts.length ? ' · ' + parts.join(' · ') : ''}`;
+}
+let trayVisSig = ''; // 当前托盘 image 的签名(含闪烁参数),变了才重设/重启闪烁,避免每次 poll 抖
+let blinkTimer: ReturnType<typeof setInterval> | null = null;
+// 按签名更新托盘图标:不变则不动;变了则重设。blink 给定时器,在 on()/off() 两帧间按 ms 切换(菜单栏无原生动画,靠定时器闪)。
+function setTrayImage(sig: string, paint: () => void, blink?: { ms: number; on: () => void; off: () => void }): void {
+  if (sig === trayVisSig) return;
+  trayVisSig = sig;
+  if (blinkTimer) {
+    clearInterval(blinkTimer);
+    blinkTimer = null;
+  }
+  if (blink) {
+    let lit = true;
+    blink.on(); // 起手先亮
+    blinkTimer = setInterval(() => {
+      lit = !lit;
+      if (lit) blink.on();
+      else blink.off();
+    }, blink.ms);
+  } else {
+    paint();
+  }
 }
 function updateTray(s: Session[]) {
   if (!tray) return;
-  const live = s.filter((x) => x.state !== 'exited').length;
-  tray.setTitle(` ${aggregateEmoji(s)} ${live}`);
+  const live = s.filter((x) => x.state !== 'exited');
+  // 图标:'icon'=固定单色三点 / 'lights'=按「第一个灯」(最高优先级 live 会话)着色的彩色点;灯语为闪烁则跟着闪
+  if (config.trayStyle === 'lights') {
+    const top = live.length
+      ? [...live].sort((a, b) => STATE_PRIORITY[a.state] - STATE_PRIORITY[b.state])[0].state
+      : null;
+    const fx = top && top !== 'exited' ? config.lights[top] : null;
+    const color: LightColor = fx ? fx.color : 'off';
+    if (fx?.blink && color !== 'off') {
+      setTrayImage(`light-${color}-blink-${fx.blinkMs}`, () => {}, {
+        ms: Math.max(1, Math.round(fx.blinkMs / 2)), // blinkMs 是整周期,半周期切一次(亮/暗各半)
+        on: () => tray?.setImage(trayIconLight(color, false)),
+        off: () => tray?.setImage(trayIconLight(color, true)),
+      });
+    } else {
+      setTrayImage(`light-${color}`, () => tray?.setImage(trayIconLight(color)));
+    }
+  } else {
+    setTrayImage('dots', () => tray?.setImage(trayIconDots()));
+  }
+  tray.setTitle(config.trayShowCount ? ` ${live.length}` : ''); // 数字可在设置里关
+  tray.setToolTip(trayTooltip(s));
 }
 function setLayout(layout: 'bar' | 'list') {
   hideTip();
@@ -636,12 +687,17 @@ function applySettings(partial: Partial<Config>): void {
   const layoutChanged = partial.layout !== undefined && partial.layout !== config.layout;
   if (partial.lights) partial.lights = sanitizeLights(partial.lights); // 落库前再夹一道(防非受控来源的越界灯效)
   Object.assign(config, partial);
+  // 切图标样式时,数字开关跟随该样式的推荐默认(红绿灯→显示、固定图标→不显);用户单独调数字时 partial 带 trayShowCount,不覆盖
+  if (partial.trayStyle !== undefined && partial.trayShowCount === undefined) {
+    config.trayShowCount = partial.trayStyle === 'lights';
+  }
   saveConfig(config);
   if (partial.shortcuts) {
     registerShortcuts();
     settingsWin?.webContents.send('settings:shortcutResult', { conflict: shortcutConflict });
   }
-  if (partial.launchAtLogin !== undefined) app.setLoginItemSettings({ openAtLogin: config.launchAtLogin });
+  if (partial.launchAtLogin !== undefined && app.isPackaged) app.setLoginItemSettings({ openAtLogin: config.launchAtLogin }); // 仅打包版碰登录项;dev 改了只存配置,装包后由 reconcile 落地
+  if (partial.trayStyle !== undefined || partial.trayShowCount !== undefined) updateTray(namedSessions()); // 样式/数字即时反映到菜单栏
   if (layoutChanged) setLayout(config.layout); // 含 show/hide + save + push
   else pushConfig();
 }
@@ -759,12 +815,11 @@ function deletePosition(index: number): void {
 
 function setupTray() {
   try {
-    tray = new Tray(nativeImage.createEmpty());
-    tray.setToolTip('CliPeek — 所有 AI agent 一眼看全');
-    tray.setTitle(' ⚪ 0');
-    const refresh = () => tray?.setContextMenu(buildMenu());
-    tray.on('mouse-down', refresh);
-    refresh();
+    tray = new Tray(trayIconDots()); // 占位;updateTray 紧接着按 config.trayStyle 修正图标
+    updateTray(latest); // 启动即按当前会话刷新图标 + 数字 + tooltip(latest 初始 [] → 空闲)
+    // 不用 setContextMenu(那样左键也会弹菜单);改成左键单击跳转、右键弹菜单。
+    tray.on('click', () => jumpToNext()); // 左键 → 跳到「第一个灯」对应会话(同 ⌘J 智能跳转)
+    tray.on('right-click', () => tray?.popUpContextMenu(buildMenu())); // 右键 → 每次重建菜单弹出(反映当前布局/更新状态)
   } catch (err) {
     console.error('[clipeek] tray setup failed:', err);
   }
@@ -863,14 +918,16 @@ app.whenReady().then(() => {
   setupIpc();
   startPolling();
   registerShortcuts(); // 按 config.shortcuts 注册 ⌘J / ⌘⇧J
-  // 自动更新:状态变化时推给设置窗(若开着),就绪时刷新托盘菜单加「重启更新」项。
+  // 自动更新:状态变化时推给设置窗(若开着)。托盘菜单已改为右键时 buildMenu() 现搭,
+  // 「重启更新」项会自动随就绪状态出现,无需在这里 setContextMenu。
   updater.onStatus((s) => {
     if (settingsWin && !settingsWin.isDestroyed()) settingsWin.webContents.send('update:status', s);
-    if (s.phase === 'ready') tray?.setContextMenu(buildMenu());
   });
   updater.start();
-  // 仅当 OS 登录项与配置不一致才写(默认都 false 时不白调 → 免去 dev 下的 Operation not permitted 噪声)
-  if (app.getLoginItemSettings().openAtLogin !== config.launchAtLogin) {
+  // 仅打包版才碰登录项:dev 的裸 Electron 注册会把登录项以 "Electron" 身份/错误路径写进去,
+  // 重启后被拉起的是裸 Electron 而非 CliPeek。故 dev 一律不读不写登录项(与自动更新同样 isPackaged 门槛)。
+  // 仅当 OS 登录项与配置不一致才写(默认都 false 时不白调 → 免去 Operation not permitted 噪声)。
+  if (app.isPackaged && app.getLoginItemSettings().openAtLogin !== config.launchAtLogin) {
     app.setLoginItemSettings({ openAtLogin: config.launchAtLogin });
   }
   app.on('activate', () => {
