@@ -79,6 +79,13 @@ export interface LightFx {
 /** 可被用户自定义灯效的会话状态(exited=灯消失,不参与映射)。 */
 export type LightStateKey = 'error' | 'needsInput' | 'working' | 'attention' | 'done';
 
+/** HUD 灯的图形 —— 用来区分不同 CLI(claude / codex …);颜色仍表状态,形状表 CLI,用户在设置里为每个 CLI 指定。 */
+export type ToolShape = 'circle' | 'square' | 'triangle' | 'diamond' | 'pentagon' | 'hexagon' | 'star' | 'spark';
+/** 图形选项顺序(设置里按此排列;也是 sanitize 的合法集合来源)。 */
+export const TOOL_SHAPES: ToolShape[] = ['circle', 'square', 'triangle', 'diamond', 'pentagon', 'hexagon', 'star', 'spark'];
+/** 未在 toolShapes 里指定的 CLI 的兜底图形。 */
+export const DEFAULT_TOOL_SHAPE: ToolShape = 'circle';
+
 /** 持久化配置(写在 userData 下的 config.json)。 */
 export interface Config {
   /** 上次窗口左上角(仅用于「上次在哪块屏」的定位;贴边落点由 dockRight/dockBottom + 当前宽高实时算)。 */
@@ -113,6 +120,8 @@ export interface Config {
   positions: SavedPosition[];
   /** 状态→灯效 自定义映射(用户可改);默认见 DEFAULT_CONFIG.lights。 */
   lights: Record<LightStateKey, LightFx>;
+  /** CLI→灯图形 自定义映射(用户可改);键为 tool 名,值为图形。未列出的 CLI 用 DEFAULT_TOOL_SHAPE。 */
+  toolShapes: Record<string, ToolShape>;
   /** 菜单栏托盘图标样式:'icon'=单色三盏灯固定图标 / 'lights'=按「第一个灯」状态着色的红绿灯点。 */
   trayStyle: 'icon' | 'lights';
   /** 菜单栏图标旁是否显示活跃会话数。默认随样式(红绿灯→显示、固定图标→不显);用户可单独覆盖。 */
@@ -154,6 +163,7 @@ export const DEFAULT_CONFIG: Config = {
     attention: { color: 'green', blink: true, blinkMs: 1200 }, // 该你了:绿闪
     done: { color: 'off', blink: false, blinkMs: 1200 }, // 完成:暗点占位
   },
+  toolShapes: { claude: 'circle', codex: 'square' }, // 默认:Claude 圆形、Codex 正方形(均可改)
   trayStyle: 'icon',
   trayShowCount: false, // 默认固定图标 → 不显数字(切到红绿灯样式会联动开启)
 };

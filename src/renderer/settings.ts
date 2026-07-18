@@ -1,5 +1,6 @@
 import type { Config, SavedPosition, UpdateStatus, LightColor, LightFx, LightStateKey } from '../shared/types';
-import { DEFAULT_CONFIG, SCALE_MIN, SCALE_MAX, BLINK_MIN_MS, BLINK_MAX_MS } from '../shared/types';
+import { DEFAULT_CONFIG, SCALE_MIN, SCALE_MAX, BLINK_MIN_MS, BLINK_MAX_MS, TOOL_SHAPES, DEFAULT_TOOL_SHAPE } from '../shared/types';
+import { shapeSvg } from './shapes';
 import type { ClipeekApi } from '../main/preload';
 
 // 设置窗:mac 桌面 app 风(参考 AirBuddy)。顶部图标标签切面板;控件用 macOS 系统原生;表单式布局。
@@ -15,6 +16,8 @@ const ICONS: Record<string, string> = {
     '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg>',
   lights:
     '<svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2.6"/><circle cx="12" cy="12" r="2.6"/><circle cx="12" cy="19" r="2.6"/></svg>',
+  shapes:
+    '<svg viewBox="0 0 24 24"><circle cx="7" cy="7" r="4"/><rect x="13.5" y="3" width="8" height="8" rx="1.2"/><path d="M12 13.5L18.5 22H5.5Z"/></svg>',
   general:
     '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
 };
@@ -22,6 +25,7 @@ const TABS = [
   { key: 'shortcuts', label: '快捷键' },
   { key: 'appearance', label: '外观' },
   { key: 'lights', label: '灯语' },
+  { key: 'shapes', label: '图形' },
   { key: 'window', label: '窗口' },
   { key: 'general', label: '通用' },
 ] as const;
@@ -208,11 +212,31 @@ function panelShortcuts(): HTMLElement[] {
     el('div', hintMsg ? 'hint warn' : 'hint', scHint),
   ];
 }
+// CLI → 灯图形 选择器:一排图形色块,点选即用(仿灯语的 swatch)。形状分 CLI、颜色分状态。
+function shapePicker(tool: string): HTMLElement {
+  const wrap = el('div', 'shape-pick');
+  const cur = cfg.toolShapes[tool] ?? DEFAULT_TOOL_SHAPE;
+  for (const sh of TOOL_SHAPES) {
+    const b = el('button', cur === sh ? 'shape-swatch on' : 'shape-swatch');
+    b.innerHTML = shapeSvg(sh);
+    b.title = sh;
+    b.onclick = () => api.settingsSet({ toolShapes: { ...cfg.toolShapes, [tool]: sh } });
+    wrap.appendChild(b);
+  }
+  return wrap;
+}
 function panelAppearance(): HTMLElement[] {
   return [
     field('缩放', stepper()),
     field('布局', layoutToggle()),
     field('灯下显示名字', checkbox(cfg.showNames, (v) => api.settingsSet({ showNames: v })), '横排模式生效'),
+  ];
+}
+// 图形 tab:为每个 CLI 指定灯的形状(形状区分 CLI、颜色仍表状态)。
+function panelShapes(): HTMLElement[] {
+  return [
+    field('Claude', shapePicker('claude'), '形状区分是哪个 CLI,灯的颜色仍表示会话状态'),
+    field('Codex', shapePicker('codex')),
   ];
 }
 // 一个「按钮 + 下方说明」单元:按钮名 = 位置名,下方 = 该位置参数说明。自定义项:右键重命名、✕ 删。
@@ -463,7 +487,9 @@ function renderPanel(): void {
           ? panelLights()
           : activeTab === 'window'
             ? panelWindow()
-            : panelGeneral();
+            : activeTab === 'shapes'
+              ? panelShapes()
+              : panelGeneral();
   panelEl.replaceChildren(...parts);
   // 同步测高 + 立刻通知主进程 resize(不等 rAF):否则"新内容已显示、窗口还是旧高度"会有 ~16ms 不一致帧 → 抖。
   // 用面板底部位置(= 头部高 + 面板内容高)作为窗口目标高,窗口贴合内容、不留大块空白。

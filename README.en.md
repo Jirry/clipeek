@@ -42,6 +42,7 @@ Both shortcuts **focus the target session's terminal** and **flash that light (w
 ## Features
 
 - **One dot per live session**, in a compact bar — with the session's name under each (toggleable).
+- **Watch multiple CLIs at once** — Claude Code and Codex sessions side by side; the **dot's shape** tells you which CLI it is (color still shows state), and the shape is configurable in Settings.
 - **Hover** a dot → a tooltip with the session's name and working directory; click ✏︎ to rename it (local only — your real session name is untouched).
 - **Two layouts**, switchable in one click:
   - **Bar** — a horizontal strip of dots, parked along your Dock.
@@ -59,6 +60,7 @@ Menu‑bar icon (or right‑click a dot) → **Settings…**:
 - **Shortcuts** — customize `⌘J` (smart jump) and `⌘⇧J` (cycle all); just record the keys.
 - **Appearance** — zoom, bar / list layout, whether to show names under the dots.
 - **Lights** — customize each state's effect (color / blink / rate / off), with a live preview per row and one‑click reset.
+- **Shapes** — pick each CLI's dot shape (circle / square / triangle / diamond / pentagon / hexagon / star / spark); shape tells CLIs apart, color still shows state.
 - **Window** — **presets** (bottom‑right / bottom‑left / top against the menu bar) for one‑click placement; **custom positions** save the current position, size, zoom and layout as a snapshot (up to 3, renamable) to restore in one click.
 - **General** — launch at login (start CliPeek automatically when you log in); **menu‑bar icon** (fixed icon / traffic light) and **whether to show the count** (switching style auto‑adjusts the count default); **software update** (check / background download / one‑click restart‑to‑update).
 
@@ -67,6 +69,7 @@ Menu‑bar icon (or right‑click a dot) → **Settings…**:
 - macOS
 - [Node.js](https://nodejs.org/) (to run from source)
 - [Claude Code](https://claude.com/claude-code)
+- [Codex CLI](https://github.com/openai/codex) (optional; to monitor Codex sessions)
 - [Warp](https://www.warp.dev/) — for jumping to a terminal tab (needs Warp ≥ `2026.05.27`). Other terminals still show status fine, they just can't be focused yet.
 
 ## Run from source
@@ -98,7 +101,7 @@ On first launch CliPeek installs a small, removable Claude Code hook (files unde
 ## Status
 
 - **Claude Code** — supported.
-- **Codex** — planned.
+- **Codex** — supported (interactive CLI sessions; `codex exec` / desktop app are not included).
 
 ## License
 

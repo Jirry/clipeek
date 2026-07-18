@@ -428,6 +428,37 @@ kbd {
 .fx-swatch.on {
   border-color: var(--text);
 }
+/* CLI 灯图形选择器(外观 tab):一排图形色块,点选即用 */
+.shape-pick {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.shape-swatch {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--check-border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--dim);
+  cursor: pointer;
+}
+.shape-swatch svg {
+  width: 15px;
+  height: 15px;
+  display: block;
+  fill: currentColor;
+}
+.shape-swatch.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
 .fx-swatch.blink {
   /* 选中且闪的颜色点自己按频率闪 = 实时预览 */
   animation: fxblink var(--p-ms, 1s) ease-in-out infinite;
