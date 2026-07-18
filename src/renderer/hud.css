@@ -222,12 +222,18 @@ body {
 .light {
   width: var(--dot);
   height: var(--dot);
-  border-radius: 50%;
   --lit: var(--gray); /* 当前灯色,由 fx-* class 设;默认灰 */
   --glow: 3; /* 光晕半径(px):常亮 3、闪烁 5 */
-  background: var(--lit);
-  box-shadow: 0 0 calc(var(--glow) * 1px * var(--scale) * var(--glow-k, 1)) var(--lit); /* 同色微光晕;--glow-k 在矮高度收一档,免被窗口边切成平边 */
-  transition: background 0.25s ease;
+  color: var(--lit); /* 内嵌 logo svg 用 fill:currentColor 继承状态色 */
+  filter: drop-shadow(0 0 calc(var(--glow) * 1px * var(--scale) * var(--glow-k, 1)) var(--lit)); /* 同色微光晕,贴 logo 轮廓;--glow-k 在矮高度收一档 */
+  transition: color 0.25s ease;
+}
+.light svg,
+.panel-dot svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  fill: currentColor; /* = color = --lit(状态色);jumped 时被覆成白 */
 }
 /* 灯色:由 config.lights 的 color 映射成 fx-* class(渲染层加) */
 .light.fx-red {
@@ -241,9 +247,9 @@ body {
 }
 .light.fx-off,
 .light.exited {
-  /* 灭 / 已退出:暗灰点,无光晕 */
+  /* 灭 / 已退出:暗灰 logo,无光晕 */
   --lit: var(--gray);
-  box-shadow: none;
+  filter: none;
   opacity: 0.4;
 }
 /* 闪烁:光晕更强 + blink 动画;周期由 --blink-ms 控制(渲染层按各状态频率设,默认 1s) */
@@ -269,19 +275,19 @@ body {
    往外扩的 outline / 放大 / 外发光 / 涟漪都会被裁,所以不用。 */
 .light.jumped,
 .panel-dot.jumped {
-  /* !important:盖过竖排灯(panel-dot)在 JS 里内联设的 box-shadow 光晕 */
-  box-shadow: inset 0 0 0 calc(3px * var(--scale)) #fff !important;
-  animation: jumpHi 0.5s ease-in-out 2 !important; /* !important:盖过竖排内联的 blink 动画,跳转脉冲两下 + 变亮完整生效 */
+  /* logo 变白,标出「跳到了这个」;白光晕 + 变亮放进 jumpHi 关键帧(动画控制 filter → 能盖过竖排内联的状态色光晕/blink,brightness 也不被静态 !important 压掉)*/
+  color: #fff !important;
+  animation: jumpHi 0.5s ease-in-out 2 !important;
 }
 @keyframes jumpHi {
   0%,
   100% {
     transform: scale(1);
-    filter: brightness(1.15);
+    filter: drop-shadow(0 0 calc(3px * var(--scale)) #fff) brightness(1.15);
   }
   50% {
     transform: scale(0.7);
-    filter: brightness(2.3);
+    filter: drop-shadow(0 0 calc(4px * var(--scale)) #fff) brightness(2.3);
   }
 }
 
@@ -480,9 +486,8 @@ body {
 .panel-dot {
   width: calc(16px * var(--scale));
   height: calc(16px * var(--scale));
-  border-radius: 50%;
   flex: 0 0 auto;
-  /* 光晕为同色,随状态在 JS 内联设置(见 buildRow)*/
+  /* 竖排灯已改内嵌 SVG(形状按 CLI);不设 border-radius,否则日后加 overflow 会把非圆图形裁圆。光晕/色随状态在 JS 内联设置(见 buildRow)*/
 }
 .panel-name {
   flex: 1 1 0;

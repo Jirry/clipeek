@@ -4,9 +4,10 @@ import { homedir } from 'node:os';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { Adapter, Config, Session, SessionState, STATE_PRIORITY, SCALE_MIN, SCALE_MAX, SavedPosition, LightColor } from '../shared/types';
-import { loadConfig, saveConfig, sanitizeLights } from './store';
+import { loadConfig, saveConfig, sanitizeLights, sanitizeToolShapes } from './store';
 import { trayIconDots, trayIconLight } from './tray-icon';
 import { ClaudeCodeAdapter } from './adapters/claude';
+import { CodexAdapter } from './adapters/codex';
 import { installHook, FOCUS_DIR } from './hook';
 import { acknowledge } from './ack';
 import { pickNextJump, pickNextAny } from './jump';
@@ -103,7 +104,7 @@ let tray: Tray | null = null;
 let config: Config = loadConfig();
 let latest: Session[] = [];
 
-const adapters: Adapter[] = [new ClaudeCodeAdapter()];
+const adapters: Adapter[] = [new ClaudeCodeAdapter(), new CodexAdapter()];
 // 每个窗口各自的最小尺寸(渲染层上报):状态条和列表的最小宽高不同,不能共用一个全局值
 const winMin = new Map<number, { w: number; h: number }>();
 function minOf(win: BrowserWindow): { w: number; h: number } {
@@ -686,6 +687,7 @@ function applySettings(partial: Partial<Config>): void {
   }
   const layoutChanged = partial.layout !== undefined && partial.layout !== config.layout;
   if (partial.lights) partial.lights = sanitizeLights(partial.lights); // 落库前再夹一道(防非受控来源的越界灯效)
+  if (partial.toolShapes) partial.toolShapes = sanitizeToolShapes(partial.toolShapes); // 同上:图形映射也夹一道
   Object.assign(config, partial);
   // 切图标样式时,数字开关跟随该样式的推荐默认(红绿灯→显示、固定图标→不显);用户单独调数字时 partial 带 trayShowCount,不覆盖
   if (partial.trayStyle !== undefined && partial.trayShowCount === undefined) {

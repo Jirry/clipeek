@@ -1,5 +1,6 @@
 import type { Config, Session, SessionState, LightFx } from '../shared/types';
 import { STATE_PRIORITY, DEFAULT_CONFIG } from '../shared/types';
+import { shapeSvg } from './shapes';
 
 // 两套窗口共用,?role= 区分:
 //   bar  横排窗:一排灯 + 悬停弹框(内置预留槽,零抖动)
@@ -49,6 +50,12 @@ function lightFx(state: SessionState): LightFx {
   if (state === 'exited') return { color: 'off', blink: false, blinkMs: 1000 };
   return config.lights[state];
 }
+
+// 灯的图形按 CLI 取(config.toolShapes[tool],用户可在设置里配;未列出的 CLI 兜底默认图形)。
+// 形状分 CLI、颜色分状态 —— 两个维度不打架。
+function toolGlyph(tool: string): string {
+  return shapeSvg(config.toolShapes[tool]);
+}
 let sessions: Session[] = [];
 let config: Config = {
   x: null,
@@ -68,6 +75,7 @@ let config: Config = {
   topCenter: false,
   positions: [],
   lights: DEFAULT_CONFIG.lights,
+  toolShapes: DEFAULT_CONFIG.toolShapes,
   trayStyle: 'icon',
   trayShowCount: false,
 };
@@ -179,15 +187,16 @@ function buildRow(s: Session, showPath: boolean): HTMLElement {
     window.clipeek.openSession(s.id); // 单击行 → 打开对应终端 tab
   });
   const dot = el('div', s.id === highlightId ? 'panel-dot jumped' : 'panel-dot');
+  dot.innerHTML = toolGlyph(s.tool); // logo 当灯:形状分 CLI
   const fx = lightFx(s.state);
   const lit = fx.color === 'off' ? 'var(--gray)' : `var(--${fx.color})`;
-  dot.style.background = lit;
+  dot.style.color = lit; // svg fill=currentColor 继承
   if (fx.color === 'off') {
-    dot.style.opacity = '0.4'; // 灭:暗灰点
+    dot.style.opacity = '0.4'; // 灭:暗灰 logo
   } else {
-    // 同色微光晕(闪烁态稍强),柔和不生硬;颜色/频率随用户配置,故内联设置
+    // 同色微光晕(闪烁态稍强)贴 logo 轮廓,柔和不生硬;颜色/频率随用户配置,故内联设置
     const glow = Math.round((fx.blink ? 6 : 3) * (config.scale || 1));
-    dot.style.boxShadow = `0 0 ${glow}px ${lit}`;
+    dot.style.filter = `drop-shadow(0 0 ${glow}px ${lit})`;
     if (fx.blink) dot.style.animation = `blink ${fx.blinkMs}ms ease-in-out infinite`;
   }
   pr.appendChild(dot);
@@ -284,7 +293,7 @@ function barPad() {
 function barSig(): string {
   return (
     sessions.map((x) => `${x.id}:${x.state}:${x.name}`).join('|') +
-    `|${config.showNames}|${config.scale}|${config.width}|${config.height}|${dock.dockH}|${highlightId}|${JSON.stringify(config.lights)}`
+    `|${config.showNames}|${config.scale}|${config.width}|${config.height}|${dock.dockH}|${highlightId}|${JSON.stringify(config.lights)}|${JSON.stringify(config.toolShapes)}`
   );
 }
 let lastBarSig = '';
@@ -333,6 +342,7 @@ function renderBar(): void {
     if (fx.blink && fx.color !== 'off') lcls.push('blink');
     if (s.id === highlightId) lcls.push('jumped');
     const lightEl = el('div', lcls.join(' '));
+    lightEl.innerHTML = toolGlyph(s.tool); // logo 当灯:形状分 CLI,颜色(fx-*)分状态
     if (fx.blink && fx.color !== 'off') lightEl.style.setProperty('--blink-ms', `${fx.blinkMs}ms`);
     cell.appendChild(lightEl);
     if (config.showNames) {

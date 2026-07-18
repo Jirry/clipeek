@@ -1,7 +1,7 @@
 import { app } from 'electron';
 import { readFileSync, writeFileSync, renameSync, unlinkSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { Config, DEFAULT_CONFIG, DEFAULT_SHORTCUTS, SCALE_MIN, SCALE_MAX, SavedPosition, LightColor, LightStateKey, BLINK_MIN_MS, BLINK_MAX_MS } from '../shared/types';
+import { Config, DEFAULT_CONFIG, DEFAULT_SHORTCUTS, SCALE_MIN, SCALE_MAX, SavedPosition, LightColor, LightStateKey, BLINK_MIN_MS, BLINK_MAX_MS, ToolShape, TOOL_SHAPES } from '../shared/types';
 
 // 极简 JSON 持久化:窗口位置、缩放、名字显隐、自定义会话名。
 // 写在 Electron userData 目录,跨启动保留(满足「记住位置」「重命名」)。
@@ -59,6 +59,18 @@ export function sanitizeLights(raw: unknown): Config['lights'] {
   return out;
 }
 
+const SHAPE_SET = new Set<ToolShape>(TOOL_SHAPES);
+/** 校验 CLI→图形 映射(防手改/损坏);先铺默认(claude/codex),再用 raw 里的合法项覆盖;非法图形丢弃。 */
+export function sanitizeToolShapes(raw: unknown): Config['toolShapes'] {
+  const out: Record<string, ToolShape> = { ...DEFAULT_CONFIG.toolShapes }; // 值为字符串,浅拷贝即安全(无嵌套引用污染)
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      if (typeof v === 'string' && SHAPE_SET.has(v as ToolShape)) out[k] = v as ToolShape;
+    }
+  }
+  return out;
+}
+
 /** 把任意 JSON 强制成合法 Config —— 防止手改/损坏的字段(如 names 非对象、scale 越界)让 poll 每秒崩。 */
 function sanitize(raw: unknown): Config {
   const o = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
@@ -95,6 +107,7 @@ function sanitize(raw: unknown): Config {
     topCenter: typeof o.topCenter === 'boolean' ? o.topCenter : DEFAULT_CONFIG.topCenter,
     positions: sanitizePositions(o.positions),
     lights: sanitizeLights(o.lights),
+    toolShapes: sanitizeToolShapes(o.toolShapes),
     trayStyle: o.trayStyle === 'lights' ? 'lights' : 'icon',
     trayShowCount: typeof o.trayShowCount === 'boolean' ? o.trayShowCount : DEFAULT_CONFIG.trayShowCount,
   };
